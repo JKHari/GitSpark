@@ -40,12 +40,25 @@ pub struct GitIdentity {
     pub default_branch: Option<String>,
 }
 
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CommitInfo {
+    pub oid: String,
+    pub short_oid: String,
+    pub summary: String,
+    pub body: String,
+    pub author_name: String,
+    pub author_email: String,
+    pub date: String,
+    pub is_head: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct RepoSnapshot {
     pub repo: RepoSummary,
     pub changes: Vec<ChangeEntry>,
     pub diffs: Vec<DiffEntry>,
     pub branches: Vec<BranchInfo>,
+    pub history: Vec<CommitInfo>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

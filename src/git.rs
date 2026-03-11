@@ -4,7 +4,9 @@ use std::process::{Command, Output};
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::models::{BranchInfo, ChangeEntry, DiffEntry, GitIdentity, RepoSnapshot, RepoSummary};
+use crate::models::{
+    BranchInfo, ChangeEntry, CommitInfo, DiffEntry, GitIdentity, RepoSnapshot, RepoSummary,
+};
 
 #[derive(Default)]
 pub struct GitClient;
@@ -118,6 +120,7 @@ impl GitClient {
 
         let branches = self.list_branches(repo_path)?;
         let diffs = self.build_diffs(repo_path, &status.changes)?;
+        let history = self.fetch_history(repo_path, 100).unwrap_or_default();
 
         Ok(RepoSnapshot {
             repo: RepoSummary {
@@ -131,7 +134,49 @@ impl GitClient {
             changes: status.changes,
             diffs,
             branches,
+            history,
         })
+    }
+
+    fn fetch_history(&self, repo_path: &Path, limit: usize) -> Result<Vec<CommitInfo>> {
+        let output = self.run_git_bytes(
+            repo_path,
+            &[
+                "log",
+                &format!("-n{limit}"),
+                "--pretty=format:%H%x00%h%x00%s%x00%b%x00%an%x00%ae%x00%ad%x00",
+                "--date=iso",
+            ],
+        )?;
+
+        let binding = String::from_utf8_lossy(&output);
+        let raw = binding.trim();
+        if raw.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut commits = Vec::new();
+        let tokens: Vec<&str> = raw.split('\0').collect();
+        
+        // chunk size is 7 fields + 1 extra empty due to trailing %x00 in format
+        for chunk in tokens.chunks_exact(8) {
+            commits.push(CommitInfo {
+                oid: chunk[0].to_string(),
+                short_oid: chunk[1].to_string(),
+                summary: chunk[2].to_string(),
+                body: chunk[3].to_string(),
+                author_name: chunk[4].to_string(),
+                author_email: chunk[5].to_string(),
+                date: chunk[6].to_string(),
+                is_head: false, // Will be set later
+            });
+        }
+
+        if let Some(first) = commits.first_mut() {
+            first.is_head = true;
+        }
+
+        Ok(commits)
     }
 
     fn resolve_repo_root(&self, path: &Path) -> Result<PathBuf> {
