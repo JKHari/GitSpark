@@ -435,11 +435,11 @@ impl RustTopApp {
 
     fn render_top_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_bar")
-            .exact_height(74.0)
+            .exact_height(68.0)
             .frame(
                 egui::Frame::default()
                     .fill(SURFACE_BG)
-                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .inner_margin(egui::Margin::symmetric(12, 5))
                     .stroke(Stroke::new(1.0, BORDER)),
             )
             .show(ctx, |ui| {
@@ -562,7 +562,14 @@ impl RustTopApp {
             PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
                 ui.set_min_width(width.max(260.0));
-                add_popup_contents(self, ui);
+                egui::Frame::default()
+                    .fill(PANEL_BG)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        add_popup_contents(self, ui);
+                    });
             },
         );
     }
