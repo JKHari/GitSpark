@@ -16,6 +16,34 @@ impl GitClient {
         Self
     }
 
+    pub fn get_commit_diff(&self, repo_path: &Path, oid: &str) -> Result<Vec<DiffEntry>> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        
+        // Use diff-tree to get raw list of changed files
+        let output = self.run_git(&repo_path, &["diff-tree", "--no-commit-id", "--name-only", "-r", oid])?;
+        let files: Vec<String> = output.lines().filter(|l| !l.is_empty()).map(String::from).collect();
+
+        let mut diffs = Vec::new();
+        for file in files {
+             // Fetch diff for this file in this commit
+             // "git show oid -- file" gives the patch
+             let diff_output = match self.run_git(&repo_path, &["show", oid, "--", &file]) {
+                Ok(content) => content,
+                Err(_) => "Binary file or deleted".to_string(),
+            };
+
+            let is_binary = looks_binary_diff(&diff_output);
+            
+            diffs.push(DiffEntry {
+                path: file,
+                diff: diff_output,
+                is_binary,
+            });
+        }
+
+        Ok(diffs)
+    }
+
     pub fn open_repo(&self, path: impl Into<PathBuf>) -> Result<RepoSnapshot> {
         let repo_path = self.resolve_repo_root(path.into().as_path())?;
         self.snapshot(&repo_path)

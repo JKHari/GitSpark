@@ -1,11 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Align, Align2, Color32, RichText, Stroke, TextStyle, Vec2};
+use egui_phosphor::regular as icons;
 use rfd::FileDialog;
 
 use crate::ai::AiClient;
 use crate::git::GitClient;
-use crate::models::{AppSettings, CommitSuggestion, GitIdentity, RepoSnapshot};
+use crate::models::{AppSettings, CommitSuggestion, DiffEntry, GitIdentity, RepoSnapshot};
 use crate::storage::{load_settings, push_recent_repo, save_settings};
 
 const BG: Color32 = Color32::from_rgb(18, 22, 29);
@@ -26,7 +27,6 @@ const DIFF_BG: Color32 = Color32::from_rgb(17, 31, 20);
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MainTab {
     Workspace,
-    Config,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -39,11 +39,14 @@ pub struct RustTopApp {
     git: GitClient,
     ai: AiClient,
     settings: AppSettings,
+    show_settings: bool,
     current_repo: Option<RepoSnapshot>,
     repo_identity: GitIdentity,
     selected_recent_repo: Option<usize>,
     selected_change: Option<String>,
     selected_commit: Option<String>,
+    commit_diffs: Option<Vec<DiffEntry>>,
+    selected_commit_file: Option<String>,
     branch_target: String,
     merge_target: String,
     commit_message: String,
@@ -57,6 +60,10 @@ pub struct RustTopApp {
 
 impl RustTopApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        let mut fonts = egui::FontDefinitions::default();
+        egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
+        cc.egui_ctx.set_fonts(fonts);
+
         configure_visuals(&cc.egui_ctx);
 
         let (settings, error_message) = match load_settings() {
@@ -64,15 +71,18 @@ impl RustTopApp {
             Err(err) => (AppSettings::default(), err.to_string()),
         };
 
-        Self {
+        let mut app = Self {
             git: GitClient::new(),
             ai: AiClient::new(),
-            settings,
+            settings: settings.clone(),
+            show_settings: false,
             current_repo: None,
             repo_identity: GitIdentity::default(),
             selected_recent_repo: None,
             selected_change: None,
             selected_commit: None,
+            commit_diffs: None,
+            selected_commit_file: None,
             branch_target: String::new(),
             merge_target: String::new(),
             commit_message: String::new(),
@@ -82,7 +92,13 @@ impl RustTopApp {
             main_tab: MainTab::Workspace,
             sidebar_tab: SidebarTab::Changes,
             filter_text: String::new(),
+        };
+
+        if let Some(last_repo) = settings.recent_repos.first() {
+            app.open_repo(last_repo.clone());
         }
+
+        app
     }
 
     fn open_repo_dialog(&mut self) {
@@ -335,7 +351,7 @@ impl RustTopApp {
                     ui.menu_button(RichText::new(repo_name).strong().color(TEXT_MAIN), |ui| {
                         ui.label("Repository selection not implemented");
                         if ui.button("Add Repository...").clicked() {
-                            ui.close();
+                            ui.close_menu();
                             self.open_repo_dialog();
                         }
                     });
@@ -357,7 +373,7 @@ impl RustTopApp {
                             if ui.button(branch.name.clone()).clicked() {
                                 self.branch_target = branch.name;
                                 self.switch_branch();
-                                ui.close();
+                                ui.close_menu();
                             }
                         }
                     });
@@ -410,15 +426,6 @@ impl RustTopApp {
             )
             .show(ctx, |ui| {
                 self.render_sidebar_tabs(ui);
-
-                if self.main_tab == MainTab::Config {
-                    ui.add_space(12.0);
-                    ui.label(
-                        RichText::new("Workspace content is hidden while Config is open.")
-                            .color(TEXT_MUTED),
-                    );
-                    return;
-                }
 
                 if self.current_repo.is_some() {
                     match self.sidebar_tab {
@@ -536,7 +543,26 @@ impl RustTopApp {
                         ui.painter().rect_filled(item_rect, 0.0, bg_color);
 
                         if response.clicked() {
-                            self.selected_commit = Some(commit.oid.clone());
+                            if self.selected_commit.as_deref() != Some(&commit.oid) {
+                                self.selected_commit = Some(commit.oid.clone());
+                                self.commit_diffs = None;
+                                self.selected_commit_file = None;
+                                
+                                // Ideally this should be async, but for now we do it sync to get the data
+                                if let Some(repo) = &self.current_repo {
+                                    match self.git.get_commit_diff(&repo.repo.path, &commit.oid) {
+                                        Ok(diffs) => {
+                                            if let Some(first) = diffs.first() {
+                                                self.selected_commit_file = Some(first.path.clone());
+                                            }
+                                            self.commit_diffs = Some(diffs);
+                                        }
+                                        Err(e) => {
+                                            self.error_message = format!("Failed to load commit details: {}", e);
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         // Summary
@@ -596,7 +622,7 @@ impl RustTopApp {
                             .strong(),
                     );
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        icon_button(ui, "+", "Open Repo").clicked().then(|| {
+                        icon_button(ui, icons::PLUS, "Open Repo").clicked().then(|| {
                             self.open_repo_dialog();
                         });
                     });
@@ -728,8 +754,8 @@ impl RustTopApp {
                         }
                         
                         // Config Button
-                         if ui.add(egui::Button::new("⚙").frame(true)).on_hover_text("Configure").clicked() {
-                            self.main_tab = MainTab::Config;
+                         if ui.add(egui::Button::new(icons::GEAR).frame(true)).on_hover_text("Configure").clicked() {
+                            self.show_settings = true;
                         }
 
                         // Commit Button (Primary)
@@ -826,42 +852,95 @@ impl RustTopApp {
                         .and_then(|r| r.history.iter().find(|c| c.oid == *oid));
 
                     if let Some(commit) = commit {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.add_space(16.0);
-                            
-                            // Commit Header
-                            ui.horizontal(|ui| {
-                                ui.heading(RichText::new(&commit.summary).color(TEXT_MAIN).size(20.0));
-                            });
-                            
-                            if !commit.body.is_empty() {
-                                ui.add_space(8.0);
-                                ui.label(RichText::new(&commit.body).color(TEXT_MAIN));
-                            }
-
-                            ui.add_space(16.0);
-                            ui.separator();
-                            ui.add_space(16.0);
-
-                            // Meta Info Grid
-                            egui::Grid::new("commit_meta_grid")
-                                .num_columns(2)
-                                .spacing([16.0, 8.0])
-                                .striped(false)
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Commit").color(TEXT_MUTED));
-                                    ui.label(RichText::new(&commit.oid).monospace().color(ACCENT));
-                                    ui.end_row();
-
-                                    ui.label(RichText::new("Author").color(TEXT_MUTED));
-                                    ui.label(RichText::new(format!("{} <{}>", commit.author_name, commit.author_email)).color(TEXT_MAIN));
-                                    ui.end_row();
-
-                                    ui.label(RichText::new("Date").color(TEXT_MUTED));
-                                    ui.label(RichText::new(&commit.date).color(TEXT_MAIN));
-                                    ui.end_row();
+                        // Top commit info
+                        egui::TopBottomPanel::top("commit_info")
+                            .frame(egui::Frame::default().fill(SURFACE_BG).inner_margin(12.0))
+                            .show_inside(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    ui.heading(RichText::new(&commit.summary).color(TEXT_MAIN));
                                 });
-                        });
+                                
+                                if !commit.body.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.label(RichText::new(&commit.body).color(TEXT_MUTED));
+                                }
+                                
+                                ui.add_space(8.0);
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(format!("{} committed {}", commit.author_name, commit.date)).color(TEXT_MUTED).size(12.0));
+                                    ui.label(RichText::new(&commit.short_oid).monospace().color(TEXT_MUTED).size(12.0));
+                                });
+                            });
+
+                        // Content area
+                        if let Some(diffs) = &self.commit_diffs {
+                             egui::TopBottomPanel::top("commit_file_list_panel")
+                                 .frame(egui::Frame::default().fill(PANEL_BG).inner_margin(0.0))
+                                 .show_inside(ui, |ui| {
+                                     egui::SidePanel::left("commit_file_list")
+                                         .resizable(true)
+                                         .default_width(220.0)
+                                         .show_inside(ui, |ui| {
+                                             ui.add_space(8.0);
+                                             ui.label(RichText::new(format!("{} changed files", diffs.len())).strong().color(TEXT_MUTED).size(12.0));
+                                             ui.add_space(8.0);
+ 
+                                             egui::ScrollArea::vertical().show(ui, |ui| {
+                                                 for diff in diffs {
+                                                     let is_selected = self.selected_commit_file.as_deref() == Some(&diff.path);
+                                                     
+                                                     if ui.selectable_label(is_selected, &diff.path).clicked() {
+                                                         self.selected_commit_file = Some(diff.path.clone());
+                                                     }
+                                                 }
+                                             });
+                                         });
+ 
+                                     egui::CentralPanel::default().show_inside(ui, |ui| {
+                                         if let Some(selected_path) = &self.selected_commit_file {
+                                             if let Some(diff) = diffs.iter().find(|d| d.path == *selected_path) {
+                                                 let diff_text = &diff.diff;
+                                                 egui::ScrollArea::vertical()
+                                                     .auto_shrink([false, false])
+                                                     .show(ui, |ui| {
+                                                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
+                                                         for line in diff_text.lines() {
+                                                             let (bg_color, text_color) = if line.starts_with('+') && !line.starts_with("+++") {
+                                                                 (Color32::from_rgba_premultiplied(40, 167, 69, 50), TEXT_MAIN)
+                                                             } else if line.starts_with('-') && !line.starts_with("---") {
+                                                                 (Color32::from_rgba_premultiplied(215, 58, 73, 50), TEXT_MAIN)
+                                                             } else if line.starts_with("@@") {
+                                                                 (SURFACE_BG_ALT, ACCENT)
+                                                             } else {
+                                                                 (Color32::TRANSPARENT, TEXT_MUTED)
+                                                             };
+ 
+                                                             egui::Frame::default()
+                                                                 .fill(bg_color)
+                                                                 .inner_margin(egui::Margin::symmetric(8, 2))
+                                                                 .show(ui, |ui| {
+                                                                     ui.add_sized([ui.available_width(), 16.0], egui::Label::new(
+                                                                         RichText::new(line)
+                                                                             .family(egui::FontFamily::Monospace)
+                                                                             .size(12.5)
+                                                                             .color(text_color)
+                                                                     ).wrap_mode(egui::TextWrapMode::Extend));
+                                                                 });
+                                                         }
+                                                     });
+                                             }
+                                         } else {
+                                             ui.centered_and_justified(|ui| {
+                                                 ui.label(RichText::new("Select a file to view diff").color(TEXT_MUTED));
+                                             });
+                                         }
+                                     });
+                                 });
+                        } else {
+                            ui.centered_and_justified(|ui| {
+                                ui.spinner();
+                            });
+                        }
                     }
                 } else {
                     ui.centered_and_justified(|ui| {
@@ -885,34 +964,34 @@ impl RustTopApp {
                     ui.label(RichText::new(path).color(TEXT_MUTED).size(13.0));
 
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        icon_button(ui, "+", "Open Repo")
+                        icon_button(ui, icons::FOLDER_OPEN, "Open Repo")
                             .clicked()
                             .then(|| self.open_repo_dialog());
-                        icon_button(ui, "⚙", "Config")
+                        icon_button(ui, icons::GEAR, "Settings")
                             .clicked()
-                            .then(|| self.main_tab = MainTab::Config);
+                            .then(|| self.show_settings = true);
                     });
                 });
             });
     }
 
-    fn render_config(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::default().fill(BG))
+    fn render_settings_window(&mut self, ctx: &egui::Context) {
+        let mut open = self.show_settings;
+        egui::Window::new(RichText::new("Settings").strong())
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
             .show(ctx, |ui| {
+                ui.set_min_width(400.0);
                 egui::Frame::default()
                     .fill(SURFACE_BG)
-                    .stroke(Stroke::new(1.0, BORDER))
                     .inner_margin(egui::Margin::same(16))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading(RichText::new("Preferences").color(TEXT_MAIN));
-                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                                compact_action_button(ui, "Back")
-                                    .clicked()
-                                    .then(|| self.main_tab = MainTab::Workspace);
-                            });
+                            ui.heading(RichText::new("Application Settings").color(TEXT_MAIN));
                         });
+                        ui.add_space(20.0);
 
                         ui.add_space(8.0);
                         ui.separator();
@@ -968,6 +1047,7 @@ impl RustTopApp {
                         }
                     });
             });
+        self.show_settings = open;
     }
 
     fn render_recent_repos_picker(&mut self, ui: &mut egui::Ui) {
@@ -1006,7 +1086,10 @@ impl eframe::App for RustTopApp {
 
         match self.main_tab {
             MainTab::Workspace => self.render_workspace(ctx),
-            MainTab::Config => self.render_config(ctx),
+        }
+
+        if self.show_settings {
+            self.render_settings_window(ctx);
         }
     }
 }
@@ -1019,19 +1102,19 @@ impl RustTopApp {
                 egui::menu::bar(ui, |ui| {
                     ui.menu_button("File", |ui| {
                         if ui.button("New Repository...").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("Add Local Repository...").clicked() {
                             self.open_repo_dialog();
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("Clone Repository...").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                         ui.separator();
                         if ui.button("Options...").clicked() {
-                            self.main_tab = MainTab::Config;
-                            ui.close();
+                            self.show_settings = true;
+                            ui.close_menu();
                         }
                         ui.separator();
                         if ui.button("Exit").clicked() {
@@ -1052,11 +1135,11 @@ impl RustTopApp {
                     ui.menu_button("View", |ui| {
                         if ui.button("Changes").clicked() {
                             self.sidebar_tab = SidebarTab::Changes;
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("History").clicked() {
                             self.sidebar_tab = SidebarTab::History;
-                            ui.close();
+                            ui.close_menu();
                         }
                         ui.separator();
                         let _ = ui.button("Repository List");
@@ -1067,28 +1150,28 @@ impl RustTopApp {
                     ui.menu_button("Repository", |ui| {
                         if ui.button("Push").clicked() {
                             // Push
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("Pull").clicked() {
                             self.refresh_repo();
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("Remove...").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                         ui.separator();
                         if ui.button("View on GitHub").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("Open in Terminal").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                         if ui.button("Show in Finder").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                         ui.separator();
                         if ui.button("Repository Settings...").clicked() {
-                            ui.close();
+                            ui.close_menu();
                         }
                     });
 
@@ -1223,15 +1306,15 @@ fn status_color(status: &str) -> Color32 {
 
 fn status_symbol(status: &str) -> &'static str {
     if status.contains('?') || status.contains('A') {
-        "+"
+        icons::PLUS
     } else if status.contains('M') {
-        "●"
+        icons::DOT_OUTLINE
     } else if status.contains('D') {
-        "−"
+        icons::MINUS
     } else if status.contains('U') {
-        "!"
+        icons::WARNING
     } else {
-        "•"
+        icons::QUESTION
     }
 }
 
