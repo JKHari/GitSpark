@@ -80,7 +80,7 @@ impl Default for AiSettings {
             endpoint: AiProvider::OpenAICompatible.default_endpoint().to_string(),
             model: "gpt-4.1-mini".to_string(),
             api_key: String::new(),
-            system_prompt: "Write a concise conventional commit style message for the provided git diff. Return JSON with fields subject and body.".to_string(),
+            system_prompt: "Write a concise conventional commit style message for the provided git diff. Return JSON with fields subject and body. Do not use markdown bold markers like ** and do not use fenced code blocks like ``` in either field. Plain sentences and normal '-' or '.' list items in the body are allowed.".to_string(),
         }
     }
 }

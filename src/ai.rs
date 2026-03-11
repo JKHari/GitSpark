@@ -48,7 +48,7 @@ impl AiClient {
                 {
                     "role": "user",
                     "content": format!(
-                        "Generate a commit message for this git diff. Respond with JSON only.\n\n{}",
+                        "Generate a commit message for this git diff. Respond with JSON only. Do not include markdown bold markers like **. Do not include fenced code blocks like ```. Plain sentences and normal '-' or '.' list items in the body are allowed.\n\n{}",
                         diff_payload
                     ),
                 }
@@ -194,8 +194,8 @@ fn parse_commit_suggestion(content: &str) -> Result<CommitSuggestion> {
     let body = lines.collect::<Vec<_>>().join("\n");
 
     Ok(CommitSuggestion {
-        subject,
-        body,
+        subject: sanitize_commit_text(&subject),
+        body: sanitize_commit_text(&body),
         raw: trimmed.to_string(),
     })
 }
@@ -211,8 +211,8 @@ fn parse_suggestion_json(input: &str) -> Result<CommitSuggestion> {
     {
         let (subject, body) = split_commit_message(commit_message)?;
         return Ok(CommitSuggestion {
-            subject,
-            body,
+            subject: sanitize_commit_text(&subject),
+            body: sanitize_commit_text(&body),
             raw: input.trim().to_string(),
         });
     }
@@ -234,8 +234,8 @@ fn parse_suggestion_json(input: &str) -> Result<CommitSuggestion> {
         .to_string();
 
     Ok(CommitSuggestion {
-        subject,
-        body,
+        subject: sanitize_commit_text(&subject),
+        body: sanitize_commit_text(&body),
         raw: input.trim().to_string(),
     })
 }
@@ -249,7 +249,19 @@ fn split_commit_message(message: &str) -> Result<(String, String)> {
         .ok_or_else(|| anyhow!("AI response did not include a commit subject"))?;
 
     let remaining = lines.collect::<Vec<_>>().join("\n");
-    Ok((subject, remaining.trim().to_string()))
+    Ok((subject, sanitize_commit_text(remaining.trim())))
+}
+
+fn sanitize_commit_text(input: &str) -> String {
+    let mut text = input.trim().replace("```json", "").replace("```", "");
+    text = text.replace("**", "");
+
+    text.lines()
+        .map(str::trim_end)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn extract_json_block(input: &str) -> Option<&str> {
