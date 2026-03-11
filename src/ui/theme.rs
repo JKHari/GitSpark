@@ -41,6 +41,7 @@ pub fn configure_visuals(ctx: &egui::Context) {
     visuals.faint_bg_color = SURFACE_BG_MUTED;
     visuals.code_bg_color = DIFF_BG;
     visuals.window_shadow = egui::epaint::Shadow::NONE;
+    visuals.popup_shadow = egui::epaint::Shadow::NONE;
     ctx.set_visuals(visuals);
 
     let mut style = (*ctx.style()).clone();

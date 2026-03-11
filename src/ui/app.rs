@@ -601,13 +601,13 @@ impl RustTopApp {
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("Repository");
+                let icon = if is_current {
+                    icons::CHECK
+                } else {
+                    icons::FOLDER_NOTCH_OPEN
+                };
                 let button = egui::Button::new(
-                    RichText::new(if is_current {
-                        format!("✓ {repo_name}")
-                    } else {
-                        repo_name.to_string()
-                    })
-                    .color(TEXT_MAIN),
+                    RichText::new(format!("{icon}  {repo_name}")).color(TEXT_MAIN),
                 )
                 .fill(Color32::TRANSPARENT)
                 .stroke(Stroke::NONE)
