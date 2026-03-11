@@ -34,7 +34,18 @@ impl GitClient {
         let mut diffs = Vec::new();
         for file in files {
             // Fetch diff for this file in this commit.
-            let diff_output = match self.run_git(&repo_path, &["show", &oid, "--", &file]) {
+            let diff_output = match self.run_git(
+                &repo_path,
+                &[
+                    "show",
+                    "--format=",
+                    "--no-ext-diff",
+                    "--no-color",
+                    &oid,
+                    "--",
+                    &file,
+                ],
+            ) {
                 Ok(content) => content,
                 Err(_) => "Binary file or deleted".to_string(),
             };
@@ -242,6 +253,7 @@ impl GitClient {
         let branches = self.list_branches(repo_path)?;
         let diffs = self.build_diffs(repo_path, &status.changes)?;
         let history = self.fetch_history(repo_path, 100).unwrap_or_default();
+        let stash_count = self.stash_count(repo_path).unwrap_or(0);
 
         Ok(RepoSnapshot {
             repo: RepoSummary {
@@ -256,6 +268,7 @@ impl GitClient {
             diffs,
             branches,
             history,
+            stash_count,
         })
     }
 
@@ -315,6 +328,14 @@ impl GitClient {
         )?;
 
         Ok(resolved.trim().to_string())
+    }
+
+    fn stash_count(&self, repo_path: &Path) -> Result<usize> {
+        let output = self.run_git(repo_path, &["stash", "list", "--format=%gd"])?;
+        Ok(output
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count())
     }
 
     fn resolve_repo_root(&self, path: &Path) -> Result<PathBuf> {

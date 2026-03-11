@@ -59,6 +59,7 @@ pub struct RepoSnapshot {
     pub diffs: Vec<DiffEntry>,
     pub branches: Vec<BranchInfo>,
     pub history: Vec<CommitInfo>,
+    pub stash_count: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
