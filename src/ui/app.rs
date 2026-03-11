@@ -2918,30 +2918,31 @@ impl GitSparkApp {
 
     fn render_ai_provider_picker(&mut self, ui: &mut egui::Ui) {
         let selected_text = self.settings.ai.provider.display_name();
-        ui.scope(|ui| {
-            apply_dark_combo_visuals(ui);
+        render_settings_dropdown(
+            ui,
+            "ai_provider_picker",
+            selected_text,
+            ui.available_width(),
+            220.0,
+            |ui| {
+                for provider in [AiProvider::OpenRouter, AiProvider::OpenAICompatible] {
+                    let label = provider.display_name();
+                    let is_selected = self.settings.ai.provider == provider;
+                    let response = render_settings_dropdown_row(ui, label, is_selected);
 
-            egui::ComboBox::from_id_salt("ai_provider_picker")
-                .selected_text(RichText::new(selected_text).color(TEXT_MAIN).size(12.0))
-                .width(ui.available_width())
-                .show_ui(ui, |ui| {
-                    apply_dark_combo_visuals(ui);
-                    for provider in [AiProvider::OpenRouter, AiProvider::OpenAICompatible] {
-                        let label = provider.display_name();
-                        if ui
-                            .selectable_value(&mut self.settings.ai.provider, provider, label)
-                            .clicked()
-                        {
-                            self.settings.ai.endpoint =
-                                self.settings.ai.provider.default_endpoint().to_string();
-                            self.openrouter_model_filter.clear();
-                            if self.settings.ai.provider == AiProvider::OpenRouter {
-                                self.ensure_openrouter_models();
-                            }
+                    if response.clicked() {
+                        self.settings.ai.provider = provider;
+                        self.settings.ai.endpoint =
+                            self.settings.ai.provider.default_endpoint().to_string();
+                        self.openrouter_model_filter.clear();
+                        if self.settings.ai.provider == AiProvider::OpenRouter {
+                            self.ensure_openrouter_models();
                         }
+                        ui.close_menu();
                     }
-                });
-        });
+                }
+            },
+        );
     }
 
     fn render_openrouter_model_picker(&mut self, ui: &mut egui::Ui) {
@@ -2975,18 +2976,13 @@ impl GitSparkApp {
                     });
 
                 ui.scope(|ui| {
-                    apply_dark_combo_visuals(ui);
-
-                    egui::ComboBox::from_id_salt("openrouter_model_picker")
-                        .selected_text(
-                            RichText::new(truncate_single_line(&selected_text, 48))
-                                .color(TEXT_MAIN)
-                                .size(12.0),
-                        )
-                        .width(ui.available_width())
-                        .show_ui(ui, |ui| {
-                            apply_dark_combo_visuals(ui);
-
+                    render_settings_dropdown(
+                        ui,
+                        "openrouter_model_picker",
+                        &truncate_single_line(&selected_text, 48),
+                        ui.available_width(),
+                        320.0,
+                        |ui| {
                             dark_singleline(
                                 ui,
                                 &mut self.openrouter_model_filter,
@@ -3016,15 +3012,22 @@ impl GitSparkApp {
                                     }
 
                                     for model in filtered_models {
-                                        let label = format!("{} ({})", model.name, model.id);
-                                        ui.selectable_value(
-                                            &mut self.settings.ai.model,
-                                            model.id.clone(),
-                                            truncate_single_line(&label, 72),
+                                        let label = truncate_single_line(
+                                            &format!("{} ({})", model.name, model.id),
+                                            72,
                                         );
+                                        let is_selected = self.settings.ai.model == model.id;
+                                        let response =
+                                            render_settings_dropdown_row(ui, &label, is_selected);
+
+                                        if response.clicked() {
+                                            self.settings.ai.model = model.id;
+                                            ui.close_menu();
+                                        }
                                     }
                                 });
-                        });
+                        },
+                    );
                 });
             }
             OpenRouterModelsState::Error(message) => {
@@ -3083,25 +3086,108 @@ fn settings_field_frame<R>(
         .show(ui, add_contents)
 }
 
-fn apply_dark_combo_visuals(ui: &mut egui::Ui) {
-    let visuals = ui.visuals_mut();
-    visuals.override_text_color = Some(TEXT_MAIN);
-    visuals.panel_fill = SURFACE_BG_MUTED;
-    visuals.window_fill = SURFACE_BG_MUTED;
-    visuals.extreme_bg_color = SURFACE_BG_MUTED;
-    visuals.faint_bg_color = SURFACE_BG_MUTED;
-    visuals.widgets.noninteractive.bg_fill = SURFACE_BG_MUTED;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, color_with_alpha(BORDER, 210.0));
-    visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, color_with_alpha(BORDER, 210.0));
-    visuals.widgets.hovered.bg_fill = SURFACE_BG;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
-    visuals.widgets.active.bg_fill = SURFACE_BG;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
-    visuals.widgets.open.bg_fill = SURFACE_BG_MUTED;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
-    ui.spacing_mut().button_padding = Vec2::new(10.0, 10.0);
-    ui.spacing_mut().interact_size.y = 40.0;
+fn render_settings_dropdown(
+    ui: &mut egui::Ui,
+    id_salt: impl std::hash::Hash,
+    selected_text: &str,
+    width: f32,
+    popup_min_width: f32,
+    add_popup_contents: impl FnOnce(&mut egui::Ui),
+) {
+    let popup_id = ui.make_persistent_id(id_salt);
+    let button = egui::Frame::default()
+        .fill(SURFACE_BG_MUTED)
+        .stroke(Stroke::new(1.0, color_with_alpha(BORDER, 210.0)))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::symmetric(12, 8))
+        .show(ui, |ui| {
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::click());
+            ui.painter().text(
+                rect.left_center(),
+                Align2::LEFT_CENTER,
+                selected_text,
+                egui::FontId::proportional(12.0),
+                TEXT_MAIN,
+            );
+            ui.painter().text(
+                rect.right_center() - Vec2::new(2.0, 0.0),
+                Align2::RIGHT_CENTER,
+                icons::CARET_DOWN,
+                egui::FontId::proportional(12.0),
+                TEXT_MUTED,
+            );
+            response
+        });
+    let response = button
+        .inner
+        .union(button.response)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+    if response.clicked() {
+        ui.memory_mut(|mem| mem.toggle_popup(popup_id));
+    }
+
+    ui.scope(|ui| {
+        let visuals = &mut ui.style_mut().visuals;
+        visuals.window_fill = SURFACE_BG_MUTED;
+        visuals.window_stroke = Stroke::NONE;
+        visuals.popup_shadow = egui::epaint::Shadow::NONE;
+
+        egui::popup_below_widget(
+            ui,
+            popup_id,
+            &response,
+            PopupCloseBehavior::CloseOnClickOutside,
+            |ui| {
+                ui.set_min_width(width.max(popup_min_width));
+                egui::Frame::default()
+                    .fill(SURFACE_BG_MUTED)
+                    .stroke(Stroke::new(1.0, color_with_alpha(BORDER, 210.0)))
+                    .corner_radius(8.0)
+                    .inner_margin(egui::Margin::same(8))
+                    .show(ui, |ui| {
+                        add_popup_contents(ui);
+                    });
+            },
+        );
+    });
+}
+
+fn render_settings_dropdown_row(ui: &mut egui::Ui, label: &str, is_selected: bool) -> egui::Response {
+    let response = egui::Frame::default()
+        .fill(if is_selected {
+            color_with_alpha(ACCENT_MUTED, 46.0)
+        } else {
+            Color32::TRANSPARENT
+        })
+        .stroke(Stroke::NONE)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new(label)
+                    .color(if is_selected { Color32::WHITE } else { TEXT_MAIN })
+                    .size(12.0),
+            );
+        })
+        .response
+        .interact(egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+    if response.hovered() && !is_selected {
+        ui.painter().rect_filled(response.rect, 6.0, SURFACE_BG);
+        ui.painter().text(
+            response.rect.left_center() + Vec2::new(10.0, 0.0),
+            Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            TEXT_MAIN,
+        );
+    }
+
+    response
 }
 
 fn dark_singleline(ui: &mut egui::Ui, value: &mut String, hint: &str) -> egui::Response {
