@@ -26,6 +26,12 @@ const SELECTION_GUTTER_WIDTH: f32 = 18.0;
 const LINE_CHECK_WIDTH: f32 = 20.0;
 const GUTTER_GAP: f32 = 4.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DiffRenderMode {
+    Interactive,
+    ReadOnly,
+}
+
 static HUNK_HEADER_RE: Lazy<Regex> = Lazy::new(|| {
     Regex::new(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?: .*)?$")
         .expect("invalid hunk header regex")
@@ -256,6 +262,19 @@ impl CachedDiff {
 }
 
 pub fn render_diff_text(ui: &mut egui::Ui, diff_text: &str, file_path: &str) {
+    render_diff_text_with_mode(ui, diff_text, file_path, DiffRenderMode::Interactive);
+}
+
+pub fn render_diff_text_readonly(ui: &mut egui::Ui, diff_text: &str, file_path: &str) {
+    render_diff_text_with_mode(ui, diff_text, file_path, DiffRenderMode::ReadOnly);
+}
+
+fn render_diff_text_with_mode(
+    ui: &mut egui::Ui,
+    diff_text: &str,
+    file_path: &str,
+    mode: DiffRenderMode,
+) {
     let prepared = prepare_diff(ui.ctx(), diff_text, file_path);
     let document = prepared.document;
     let syntax_tokens = prepared.syntax_tokens;
@@ -273,6 +292,7 @@ pub fn render_diff_text(ui: &mut egui::Ui, diff_text: &str, file_path: &str) {
                     row_index,
                     syntax_tokens.as_deref(),
                     visible_start,
+                    mode,
                 );
             }
         });
@@ -799,17 +819,19 @@ fn render_row(
     row_index: usize,
     syntax_tokens: Option<&Vec<Vec<SyntaxSpan>>>,
     visible_start: usize,
+    mode: DiffRenderMode,
 ) {
     let row = &document.rows[row_index];
     let width = ui.available_width();
     let (row_rect, _) = ui.allocate_exact_size(Vec2::new(width, ROW_HEIGHT), egui::Sense::hover());
-    let gutter = layout_gutter(row_rect, document.gutter_digits);
+    let gutter = layout_gutter(row_rect, document.gutter_digits, mode);
     let (before_target, after_target) = row_line_targets(row_index, row);
     let group = document
         .row_group_ids
         .get(row_index)
         .and_then(|group_id| group_id.and_then(|group_id| document.row_groups.get(group_id)));
-    let show_group_handle = group.is_some_and(|group| group.targets.len() > 1);
+    let interactive = mode == DiffRenderMode::Interactive;
+    let show_group_handle = interactive && group.is_some_and(|group| group.targets.len() > 1);
 
     if show_group_handle {
         let group_id = group.expect("group missing");
@@ -830,44 +852,56 @@ fn render_row(
         }
     }
 
-    if let Some(target) = before_target {
-        let response = ui.interact(
-            gutter.before_rect,
-            line_selection_id(ui, document.selection_scope, target),
-            egui::Sense::click(),
-        );
-        if response.hovered() {
-            ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
+    if interactive {
+        if let Some(target) = before_target {
+            let response = ui.interact(
+                gutter.before_rect,
+                line_selection_id(ui, document.selection_scope, target),
+                egui::Sense::click(),
+            );
+            if response.hovered() {
+                ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            if response.clicked() {
+                let selected = get_line_selected(ui, document.selection_scope, target);
+                set_line_selected(ui, document.selection_scope, target, !selected);
+            }
         }
-        if response.clicked() {
-            let selected = get_line_selected(ui, document.selection_scope, target);
-            set_line_selected(ui, document.selection_scope, target, !selected);
+
+        if let Some(target) = after_target {
+            let response = ui.interact(
+                gutter.after_rect,
+                line_selection_id(ui, document.selection_scope, target),
+                egui::Sense::click(),
+            );
+            if response.hovered() {
+                ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
+            }
+            if response.clicked() {
+                let selected = get_line_selected(ui, document.selection_scope, target);
+                set_line_selected(ui, document.selection_scope, target, !selected);
+            }
         }
     }
 
-    if let Some(target) = after_target {
-        let response = ui.interact(
-            gutter.after_rect,
-            line_selection_id(ui, document.selection_scope, target),
-            egui::Sense::click(),
-        );
-        if response.hovered() {
-            ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
-        }
-        if response.clicked() {
-            let selected = get_line_selected(ui, document.selection_scope, target);
-            set_line_selected(ui, document.selection_scope, target, !selected);
-        }
-    }
-
-    let before_selected =
-        before_target.map(|target| get_line_selected(ui, document.selection_scope, target));
-    let after_selected =
-        after_target.map(|target| get_line_selected(ui, document.selection_scope, target));
-    let group_state = group
-        .map(|group| get_group_selection_state(ui, document.selection_scope, group))
-        .unwrap_or(GroupSelectionState::None);
-    let show_group_icon = group.is_some_and(|group| {
+    let before_selected = if interactive {
+        before_target.map(|target| get_line_selected(ui, document.selection_scope, target))
+    } else {
+        None
+    };
+    let after_selected = if interactive {
+        after_target.map(|target| get_line_selected(ui, document.selection_scope, target))
+    } else {
+        None
+    };
+    let group_state = if interactive {
+        group
+            .map(|group| get_group_selection_state(ui, document.selection_scope, group))
+            .unwrap_or(GroupSelectionState::None)
+    } else {
+        GroupSelectionState::None
+    };
+    let show_group_icon = interactive && group.is_some_and(|group| {
         show_group_handle
             && (row_index == group.start_row
                 || (group.start_row < visible_start && row_index == visible_start))
@@ -898,6 +932,7 @@ fn render_row(
                 LineCellState::inactive(None, line_cell_base_bg(row, DiffSide::Before)),
                 LineCellState::inactive(None, line_cell_base_bg(row, DiffSide::After)),
                 GroupHandleState::inactive(),
+                mode,
             );
             render_hunk_text(ui, row_rect, document.gutter_digits, text);
         }
@@ -921,6 +956,7 @@ fn render_row(
                     line_cell_base_bg(row, DiffSide::After),
                 ),
                 GroupHandleState::inactive(),
+                mode,
             );
             render_code_cell(
                 ui,
@@ -951,6 +987,7 @@ fn render_row(
                     line_cell_base_bg(row, DiffSide::After),
                 ),
                 GroupHandleState::new(group_state, show_group_icon),
+                mode,
             );
             render_code_cell(
                 ui,
@@ -981,6 +1018,7 @@ fn render_row(
                 ),
                 LineCellState::inactive(None, line_cell_base_bg(row, DiffSide::After)),
                 GroupHandleState::new(group_state, show_group_icon),
+                mode,
             );
             render_code_cell(
                 ui,
@@ -1020,6 +1058,7 @@ fn render_row(
                     line_cell_base_bg(row, DiffSide::After),
                 ),
                 GroupHandleState::new(group_state, show_group_icon),
+                mode,
             );
             let divider_x = gutter.content_rect.center().x;
             let divider_stroke = Stroke::new(1.0, BORDER);
@@ -1070,13 +1109,23 @@ struct GutterLayout {
     content_rect: egui::Rect,
 }
 
-fn layout_gutter(row_rect: egui::Rect, gutter_digits: usize) -> GutterLayout {
-    let gutter_width = total_gutter_width(gutter_digits);
+fn layout_gutter(row_rect: egui::Rect, gutter_digits: usize, mode: DiffRenderMode) -> GutterLayout {
+    let gap = if mode == DiffRenderMode::Interactive {
+        GUTTER_GAP
+    } else {
+        0.0
+    };
+    let group_width = if mode == DiffRenderMode::Interactive {
+        SELECTION_GUTTER_WIDTH
+    } else {
+        0.0
+    };
+    let line_cell_width = line_number_cell_width(gutter_digits, mode);
+    let gutter_width = line_cell_width * 2.0 + gap + group_width + gap;
     let gutter_rect = egui::Rect::from_min_max(
         row_rect.min,
         egui::pos2(row_rect.left() + gutter_width, row_rect.bottom()),
     );
-    let line_cell_width = line_number_cell_width(gutter_digits);
     let before_rect = egui::Rect::from_min_max(
         gutter_rect.min,
         egui::pos2(
@@ -1085,16 +1134,16 @@ fn layout_gutter(row_rect: egui::Rect, gutter_digits: usize) -> GutterLayout {
         ),
     );
     let after_rect = egui::Rect::from_min_max(
-        egui::pos2(before_rect.right() + GUTTER_GAP, gutter_rect.top()),
+        egui::pos2(before_rect.right() + gap, gutter_rect.top()),
         egui::pos2(
-            before_rect.right() + GUTTER_GAP + line_cell_width,
+            before_rect.right() + gap + line_cell_width,
             gutter_rect.bottom(),
         ),
     );
     let group_rect = egui::Rect::from_min_max(
-        egui::pos2(after_rect.right() + GUTTER_GAP, gutter_rect.top()),
+        egui::pos2(after_rect.right() + gap, gutter_rect.top()),
         egui::pos2(
-            after_rect.right() + GUTTER_GAP + SELECTION_GUTTER_WIDTH,
+            after_rect.right() + gap + group_width,
             gutter_rect.bottom(),
         ),
     );
@@ -1111,8 +1160,13 @@ fn layout_gutter(row_rect: egui::Rect, gutter_digits: usize) -> GutterLayout {
     }
 }
 
-fn line_number_cell_width(gutter_digits: usize) -> f32 {
-    line_number_width(gutter_digits) + LINE_CHECK_WIDTH
+fn line_number_cell_width(gutter_digits: usize, mode: DiffRenderMode) -> f32 {
+    line_number_width(gutter_digits)
+        + if mode == DiffRenderMode::Interactive {
+            LINE_CHECK_WIDTH
+        } else {
+            0.0
+        }
 }
 
 struct LineCellState {
@@ -1169,11 +1223,14 @@ fn render_gutter(
     before: LineCellState,
     after: LineCellState,
     group: GroupHandleState,
+    mode: DiffRenderMode,
 ) {
     painter.rect_filled(gutter.gutter_rect, 0.0, SURFACE_BG_MUTED);
-    render_line_cell(painter, gutter.before_rect, before);
-    render_line_cell(painter, gutter.after_rect, after);
-    render_group_handle(painter, gutter.group_rect, group);
+    render_line_cell(painter, gutter.before_rect, before, mode);
+    render_line_cell(painter, gutter.after_rect, after, mode);
+    if mode == DiffRenderMode::Interactive {
+        render_group_handle(painter, gutter.group_rect, group);
+    }
     painter.vline(
         gutter.gutter_rect.right(),
         gutter.gutter_rect.y_range(),
@@ -1189,22 +1246,30 @@ fn render_gutter(
         gutter.after_rect.y_range(),
         Stroke::new(1.0, Color32::from_black_alpha(50)),
     );
-    painter.vline(
-        gutter.group_rect.right(),
-        gutter.group_rect.y_range(),
-        Stroke::new(1.0, Color32::from_black_alpha(50)),
-    );
+    if mode == DiffRenderMode::Interactive {
+        painter.vline(
+            gutter.group_rect.right(),
+            gutter.group_rect.y_range(),
+            Stroke::new(1.0, Color32::from_black_alpha(50)),
+        );
+    }
 }
 
-fn render_line_cell(painter: &egui::Painter, rect: egui::Rect, cell: LineCellState) {
-    let background = if cell.selectable && cell.selected {
+fn render_line_cell(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    cell: LineCellState,
+    mode: DiffRenderMode,
+) {
+    let show_ticks = mode == DiffRenderMode::Interactive;
+    let background = if show_ticks && cell.selectable && cell.selected {
         selection_fill(false)
     } else {
         cell.base_bg
     };
     painter.rect_filled(rect, 0.0, background);
 
-    if cell.selectable && cell.selected {
+    if show_ticks && cell.selectable && cell.selected {
         let check_rect = egui::Rect::from_min_max(
             rect.min,
             egui::pos2(rect.left() + LINE_CHECK_WIDTH, rect.bottom()),
@@ -1220,11 +1285,11 @@ fn render_line_cell(painter: &egui::Painter, rect: egui::Rect, cell: LineCellSta
 
     if let Some(line_number) = cell.line_number {
         painter.text(
-            rect.right_center() - Vec2::new(8.0, 0.0),
+            rect.right_center() - Vec2::new(if show_ticks { 8.0 } else { 6.0 }, 0.0),
             egui::Align2::RIGHT_CENTER,
             line_number.to_string(),
             egui::FontId::monospace(11.0),
-            if cell.selectable && cell.selected {
+            if show_ticks && cell.selectable && cell.selected {
                 Color32::WHITE
             } else {
                 TEXT_MUTED
@@ -1447,7 +1512,7 @@ fn line_number_width(gutter_digits: usize) -> f32 {
 }
 
 fn total_gutter_width(gutter_digits: usize) -> f32 {
-    let number_width = line_number_cell_width(gutter_digits);
+    let number_width = line_number_cell_width(gutter_digits, DiffRenderMode::Interactive);
     SELECTION_GUTTER_WIDTH + number_width * 2.0 + GUTTER_GAP * 2.0
 }
 

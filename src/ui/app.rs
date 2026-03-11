@@ -15,7 +15,7 @@ use crate::git::GitClient;
 use crate::models::{AppSettings, CommitSuggestion, DiffEntry, GitIdentity, RepoSnapshot};
 use crate::storage::{load_settings, push_recent_repo, save_settings};
 use crate::ui::components::buttons::{compact_action_button, tab_button};
-use crate::ui::components::diff::render_diff_text;
+use crate::ui::components::diff::{render_diff_text, render_diff_text_readonly};
 use crate::ui::theme::{
     ACCENT_MUTED, BG, BORDER, DANGER, DIFF_BG, PANEL_BG, SUCCESS, SURFACE_BG, SURFACE_BG_MUTED,
     TEXT_MAIN, TEXT_MUTED, WARNING, configure_visuals,
@@ -32,7 +32,7 @@ pub enum SidebarTab {
     History,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum NetworkAction {
     Fetch,
     Pull,
@@ -102,6 +102,7 @@ pub struct GitSparkApp {
     ai_preview: Option<CommitSuggestion>,
     status_message: String,
     error_message: String,
+    active_network_action: Option<NetworkAction>,
     main_tab: MainTab,
     sidebar_tab: SidebarTab,
     filter_text: String,
@@ -148,6 +149,7 @@ impl GitSparkApp {
             ai_preview: None,
             status_message: "Open a repository to get started.".to_string(),
             error_message,
+            active_network_action: None,
             main_tab: MainTab::Workspace,
             sidebar_tab: SidebarTab::Changes,
             filter_text: String::new(),
@@ -280,6 +282,10 @@ impl GitSparkApp {
     }
 
     fn run_network_action(&mut self, action: NetworkAction) {
+        if self.active_network_action.is_some() {
+            return;
+        }
+
         let Some(path) = self.repo_path().map(PathBuf::from) else {
             self.error_message = "No repository selected.".to_string();
             return;
@@ -294,6 +300,7 @@ impl GitSparkApp {
 
         self.status_message = format!("{action_label}...");
         self.error_message.clear();
+        self.active_network_action = Some(action);
 
         let tx = self.event_tx.clone();
         let ctx = self.ctx.clone();
@@ -1035,7 +1042,26 @@ impl GitSparkApp {
             .clone()
             .unwrap_or_else(|| "origin".to_string());
         let primary_action = NetworkAction::from_snapshot(&snapshot);
-        let title = primary_action.title(&remote_name);
+        let is_action_active = self.active_network_action == Some(primary_action);
+        let any_action_active = self.active_network_action.is_some();
+        let action_anim = ui.ctx().animate_bool_with_time(
+            ui.make_persistent_id(("toolbar_network_action", primary_action)),
+            is_action_active,
+            0.18,
+        );
+        let animation_time = ui.input(|input| input.time) as f32;
+        let action_pulse = if is_action_active {
+            ui.ctx()
+                .request_repaint_after(Duration::from_millis(16));
+            ((animation_time * 7.0).sin() * 0.5 + 0.5) * action_anim
+        } else {
+            0.0
+        };
+        let title = if is_action_active {
+            format!("{}...", primary_action.pending_title(&remote_name))
+        } else {
+            primary_action.title(&remote_name)
+        };
         let description = snapshot
             .repo
             .last_fetched
@@ -1043,8 +1069,19 @@ impl GitSparkApp {
             .map(|value| format!("Last fetched {value}"))
             .unwrap_or_else(|| "Never fetched".to_string());
         let block = egui::Frame::default()
-            .fill(Color32::TRANSPARENT)
-            .stroke(Stroke::NONE)
+            .fill(color_with_alpha(
+                SURFACE_BG,
+                if is_action_active {
+                    132.0 + action_pulse * 28.0
+                } else {
+                    0.0
+                },
+            ))
+            .stroke(if is_action_active {
+                Stroke::new(1.0, blend_color(BORDER, TEXT_MUTED, 0.28 + action_pulse * 0.18))
+            } else {
+                Stroke::NONE
+            })
             .corner_radius(0.0)
             .inner_margin(egui::Margin::same(0))
             .show(ui, |ui| {
@@ -1056,13 +1093,19 @@ impl GitSparkApp {
                             egui::Layout::left_to_right(Align::Center),
                             |ui| {
                                 ui.add_space(12.0);
-                                ui.add_sized(
-                                    [18.0, 52.0],
-                                    egui::Label::new(
-                                        RichText::new(primary_action.icon())
-                                            .size(15.0)
-                                            .color(TEXT_MUTED),
-                                    ),
+                                let (icon_rect, _) = ui
+                                    .allocate_exact_size(Vec2::new(18.0, 52.0), egui::Sense::hover());
+                                let icon_offset = if is_action_active {
+                                    (-1.0 + (animation_time * 10.0).sin() * 1.5) * action_anim
+                                } else {
+                                    0.0
+                                };
+                                ui.painter().text(
+                                    egui::pos2(icon_rect.left(), icon_rect.center().y + icon_offset),
+                                    Align2::LEFT_CENTER,
+                                    primary_action.icon(),
+                                    egui::FontId::proportional(15.0 + action_anim * 0.5),
+                                    blend_color(TEXT_MUTED, TEXT_MAIN, action_anim),
                                 );
                                 ui.add_space(12.0);
                                 render_network_text_stack(
@@ -1072,12 +1115,18 @@ impl GitSparkApp {
                                     snapshot.repo.ahead,
                                     snapshot.repo.behind,
                                     143.0,
+                                    action_anim,
+                                    action_pulse,
                                 );
                             },
                         )
                         .response
-                        .interact(egui::Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        .interact(egui::Sense::click());
+                    let main = if any_action_active {
+                        main
+                    } else {
+                        main.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    };
 
                     let divider_x = ui.min_rect().left() + 185.0;
                     ui.painter().vline(
@@ -1085,18 +1134,20 @@ impl GitSparkApp {
                         ui.max_rect().y_range(),
                         Stroke::new(1.0, BORDER),
                     );
+                    let arrow_button = egui::Button::new(
+                        RichText::new(icons::CARET_DOWN)
+                            .size(11.0)
+                            .color(if any_action_active { TEXT_MUTED } else { TEXT_MUTED }),
+                    )
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::NONE);
                     let arrow = ui
-                        .add_sized(
-                            [39.0, 52.0],
-                            egui::Button::new(
-                                RichText::new(icons::CARET_DOWN)
-                                    .size(11.0)
-                                    .color(TEXT_MUTED),
-                            )
-                            .fill(Color32::TRANSPARENT)
-                            .stroke(Stroke::NONE),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        .add_enabled(!any_action_active, arrow_button);
+                    let arrow = if any_action_active {
+                        arrow
+                    } else {
+                        arrow.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    };
 
                     (main, arrow)
                 })
@@ -1104,7 +1155,7 @@ impl GitSparkApp {
             });
         let (main_response, arrow_response) = block.inner;
 
-        if main_response.clicked() {
+        if !any_action_active && main_response.clicked() {
             self.run_network_action(primary_action);
         }
 
@@ -1168,22 +1219,44 @@ impl GitSparkApp {
         remote_name: &str,
         primary_action: NetworkAction,
     ) {
+        let any_action_active = self.active_network_action.is_some();
         ui.label(RichText::new("Remote").small().color(TEXT_MUTED));
         ui.add_space(6.0);
 
-        if ui.button(primary_action.title(remote_name)).clicked() {
+        let primary_label = if self.active_network_action == Some(primary_action) {
+            format!("{}...", primary_action.pending_title(remote_name))
+        } else {
+            primary_action.title(remote_name)
+        };
+
+        if ui
+            .add_enabled(!any_action_active, egui::Button::new(primary_label))
+            .clicked()
+        {
             self.run_network_action(primary_action);
             ui.close_menu();
         }
 
-        if primary_action != NetworkAction::Fetch && ui.button(format!("Fetch {remote_name}")).clicked() {
+        if primary_action != NetworkAction::Fetch
+            && ui
+                .add_enabled(
+                    !any_action_active,
+                    egui::Button::new(format!("Fetch {remote_name}")),
+                )
+                .clicked()
+        {
             self.fetch_origin();
             ui.close_menu();
         }
 
         if snapshot.repo.behind > 0
             && primary_action != NetworkAction::Pull
-            && ui.button(format!("Pull {remote_name}")).clicked()
+            && ui
+                .add_enabled(
+                    !any_action_active,
+                    egui::Button::new(format!("Pull {remote_name}")),
+                )
+                .clicked()
         {
             self.pull_origin();
             ui.close_menu();
@@ -1191,7 +1264,12 @@ impl GitSparkApp {
 
         if snapshot.repo.ahead > 0
             && primary_action != NetworkAction::Push
-            && ui.button(format!("Push {remote_name}")).clicked()
+            && ui
+                .add_enabled(
+                    !any_action_active,
+                    egui::Button::new(format!("Push {remote_name}")),
+                )
+                .clicked()
         {
             self.push_origin();
             ui.close_menu();
@@ -2395,7 +2473,7 @@ impl GitSparkApp {
                                                     .show(ui, |ui| {
                                                         ui.style_mut().spacing.item_spacing =
                                                             Vec2::ZERO;
-                                                        render_diff_text(
+                                                        render_diff_text_readonly(
                                                             ui,
                                                             &diff.diff,
                                                             selected_path,
@@ -2615,11 +2693,13 @@ impl eframe::App for GitSparkApp {
                     self.error_message = format!("Commit failed: {err}");
                 }
                 AppEvent::NetworkActionCompleted(Ok(snapshot), action_label) => {
+                    self.active_network_action = None;
                     self.adopt_snapshot(snapshot);
                     self.status_message = format!("{action_label} complete.");
                     self.error_message.clear();
                 }
                 AppEvent::NetworkActionCompleted(Err(err), action_label) => {
+                    self.active_network_action = None;
                     self.error_message = format!("{action_label} failed: {err}");
                 }
                 AppEvent::AiCommitGenerated(Ok(suggestion)) => {
@@ -2802,6 +2882,14 @@ impl NetworkAction {
         }
     }
 
+    fn pending_title(self, remote_name: &str) -> String {
+        match self {
+            Self::Fetch => format!("Fetching {remote_name}"),
+            Self::Pull => format!("Pulling {remote_name}"),
+            Self::Push => format!("Pushing {remote_name}"),
+        }
+    }
+
     fn icon(self) -> &'static str {
         match self {
             Self::Fetch => icons::ARROW_CLOCKWISE,
@@ -2979,26 +3067,44 @@ fn render_network_text_stack(
     ahead: usize,
     behind: usize,
     width: f32,
+    active_t: f32,
+    pulse: f32,
 ) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 52.0), egui::Sense::hover());
     let painter = ui.painter();
     let text_left = rect.left();
     let text_top = rect.top() + 9.0;
+    let description_color = blend_color(TEXT_MUTED, TEXT_MAIN, active_t * 0.35);
+    let title_color = blend_color(TEXT_MAIN, Color32::WHITE, active_t * 0.35);
+    let indicator_color = blend_color(TEXT_MUTED, TEXT_MAIN, active_t * 0.5);
 
     painter.text(
         egui::pos2(text_left, text_top),
         Align2::LEFT_TOP,
         truncate_single_line(description, 26),
         egui::FontId::proportional(10.0),
-        TEXT_MUTED,
+        description_color,
     );
     painter.text(
         egui::pos2(text_left, text_top + 13.0),
         Align2::LEFT_TOP,
         truncate_single_line(title, 18),
         egui::FontId::proportional(12.5),
-        TEXT_MAIN,
+        title_color,
     );
+
+    if active_t > 0.0 {
+        let progress_width = 28.0 + pulse * 28.0;
+        let progress_rect = egui::Rect::from_min_size(
+            egui::pos2(text_left, rect.bottom() - 10.0),
+            Vec2::new(progress_width, 2.0),
+        );
+        painter.rect_filled(
+            progress_rect,
+            1.0,
+            color_with_alpha(TEXT_MAIN, 100.0 + pulse * 52.0),
+        );
+    }
 
     let mut indicator_x = text_left + 92.0;
     if ahead > 0 {
@@ -3007,7 +3113,7 @@ fn render_network_text_stack(
             Align2::LEFT_TOP,
             format!("{ahead}{}", icons::ARROW_UP),
             egui::FontId::proportional(11.0),
-            TEXT_MUTED,
+            indicator_color,
         );
         indicator_x += 22.0;
     }
@@ -3017,9 +3123,29 @@ fn render_network_text_stack(
             Align2::LEFT_TOP,
             format!("{behind}{}", icons::ARROW_DOWN),
             egui::FontId::proportional(11.0),
-            TEXT_MUTED,
+            indicator_color,
         );
     }
+}
+
+fn color_with_alpha(color: Color32, alpha: f32) -> Color32 {
+    Color32::from_rgba_premultiplied(
+        color.r(),
+        color.g(),
+        color.b(),
+        alpha.clamp(0.0, 255.0) as u8,
+    )
+}
+
+fn blend_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| -> u8 { (a as f32 + (b as f32 - a as f32) * t).round() as u8 };
+    Color32::from_rgba_premultiplied(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+        mix(from.a(), to.a()),
+    )
 }
 
 fn truncate_single_line(text: &str, max_chars: usize) -> String {
