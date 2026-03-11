@@ -119,6 +119,7 @@ pub struct GitSparkApp {
     commit_body: String,
     ai_preview: Option<CommitSuggestion>,
     openrouter_models: OpenRouterModelsState,
+    openrouter_model_filter: String,
     status_message: String,
     error_message: String,
     active_network_action: Option<NetworkAction>,
@@ -167,6 +168,7 @@ impl GitSparkApp {
             commit_body: String::new(),
             ai_preview: None,
             openrouter_models: OpenRouterModelsState::Idle,
+            openrouter_model_filter: String::new(),
             status_message: "Open a repository to get started.".to_string(),
             error_message,
             active_network_action: None,
@@ -2861,9 +2863,13 @@ impl GitSparkApp {
         ui.add_space(10.0);
         ui.label(RichText::new("Model").color(TEXT_MUTED).size(11.0));
         if self.settings.ai.provider == AiProvider::OpenRouter {
-            self.render_openrouter_model_picker(ui);
+            settings_field_frame(ui, |ui| {
+                self.render_openrouter_model_picker(ui);
+            });
         } else {
-            dark_singleline(ui, &mut self.settings.ai.model, "gpt-4.1-mini");
+            settings_field_frame(ui, |ui| {
+                dark_singleline(ui, &mut self.settings.ai.model, "gpt-4.1-mini");
+            });
         }
 
         ui.add_space(8.0);
@@ -2895,11 +2901,11 @@ impl GitSparkApp {
 
         ui.add_space(18.0);
         let save = ui.add(
-            egui::Button::new(RichText::new("Save AI Settings").color(Color32::WHITE))
+            egui::Button::new(RichText::new("Save").color(Color32::WHITE).strong())
                 .fill(ACCENT_MUTED)
                 .stroke(Stroke::NONE)
                 .corner_radius(6.0)
-                .min_size(Vec2::new(138.0, 34.0)),
+                .min_size(Vec2::new(ui.available_width(), 38.0)),
         );
         if save.clicked() {
             self.settings.ai.endpoint = self.settings.ai.provider.default_endpoint().to_string();
@@ -2913,20 +2919,13 @@ impl GitSparkApp {
     fn render_ai_provider_picker(&mut self, ui: &mut egui::Ui) {
         let selected_text = self.settings.ai.provider.display_name();
         ui.scope(|ui| {
-            let visuals = ui.visuals_mut();
-            visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
-            visuals.widgets.inactive.bg_stroke = Stroke::NONE;
-            visuals.widgets.hovered.bg_fill = SURFACE_BG_MUTED;
-            visuals.widgets.hovered.bg_stroke =
-                Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
-            visuals.widgets.active.bg_fill = SURFACE_BG_MUTED;
-            visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+            apply_dark_combo_visuals(ui);
 
             egui::ComboBox::from_id_salt("ai_provider_picker")
                 .selected_text(RichText::new(selected_text).color(TEXT_MAIN).size(12.0))
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
-                    ui.style_mut().visuals.panel_fill = SURFACE_BG_MUTED;
+                    apply_dark_combo_visuals(ui);
                     for provider in [AiProvider::OpenRouter, AiProvider::OpenAICompatible] {
                         let label = provider.display_name();
                         if ui
@@ -2935,6 +2934,7 @@ impl GitSparkApp {
                         {
                             self.settings.ai.endpoint =
                                 self.settings.ai.provider.default_endpoint().to_string();
+                            self.openrouter_model_filter.clear();
                             if self.settings.ai.provider == AiProvider::OpenRouter {
                                 self.ensure_openrouter_models();
                             }
@@ -2961,6 +2961,7 @@ impl GitSparkApp {
                     });
             }
             OpenRouterModelsState::Ready(models) => {
+                let filter = self.openrouter_model_filter.trim().to_ascii_lowercase();
                 let selected_text = models
                     .iter()
                     .find(|model| model.id == self.settings.ai.model)
@@ -2974,14 +2975,7 @@ impl GitSparkApp {
                     });
 
                 ui.scope(|ui| {
-                    let visuals = ui.visuals_mut();
-                    visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
-                    visuals.widgets.inactive.bg_stroke = Stroke::NONE;
-                    visuals.widgets.hovered.bg_fill = SURFACE_BG_MUTED;
-                    visuals.widgets.hovered.bg_stroke =
-                        Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
-                    visuals.widgets.active.bg_fill = SURFACE_BG_MUTED;
-                    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+                    apply_dark_combo_visuals(ui);
 
                     egui::ComboBox::from_id_salt("openrouter_model_picker")
                         .selected_text(
@@ -2991,11 +2985,37 @@ impl GitSparkApp {
                         )
                         .width(ui.available_width())
                         .show_ui(ui, |ui| {
-                            ui.style_mut().visuals.panel_fill = SURFACE_BG_MUTED;
+                            apply_dark_combo_visuals(ui);
+
+                            dark_singleline(
+                                ui,
+                                &mut self.openrouter_model_filter,
+                                "Search models...",
+                            );
+                            ui.add_space(8.0);
+
+                            let filtered_models = models
+                                .iter()
+                                .filter(|model| {
+                                    filter.is_empty()
+                                        || model.id.to_ascii_lowercase().contains(&filter)
+                                        || model.name.to_ascii_lowercase().contains(&filter)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>();
+
                             egui::ScrollArea::vertical()
                                 .max_height(260.0)
                                 .show(ui, |ui| {
-                                    for model in models {
+                                    if filtered_models.is_empty() {
+                                        ui.label(
+                                            RichText::new("No models match your search.")
+                                                .color(TEXT_MUTED)
+                                                .size(11.0),
+                                        );
+                                    }
+
+                                    for model in filtered_models {
                                         let label = format!("{} ({})", model.name, model.id);
                                         ui.selectable_value(
                                             &mut self.settings.ai.model,
@@ -3049,6 +3069,39 @@ impl GitSparkApp {
         ui.label(RichText::new(description).color(TEXT_MUTED).size(12.0));
     }
 
+}
+
+fn settings_field_frame<R>(
+    ui: &mut egui::Ui,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    egui::Frame::default()
+        .fill(SURFACE_BG_MUTED)
+        .stroke(Stroke::new(1.0, color_with_alpha(BORDER, 210.0)))
+        .corner_radius(8.0)
+        .inner_margin(egui::Margin::same(1))
+        .show(ui, add_contents)
+}
+
+fn apply_dark_combo_visuals(ui: &mut egui::Ui) {
+    let visuals = ui.visuals_mut();
+    visuals.override_text_color = Some(TEXT_MAIN);
+    visuals.panel_fill = SURFACE_BG_MUTED;
+    visuals.window_fill = SURFACE_BG_MUTED;
+    visuals.extreme_bg_color = SURFACE_BG_MUTED;
+    visuals.faint_bg_color = SURFACE_BG_MUTED;
+    visuals.widgets.noninteractive.bg_fill = SURFACE_BG_MUTED;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, color_with_alpha(BORDER, 210.0));
+    visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, color_with_alpha(BORDER, 210.0));
+    visuals.widgets.hovered.bg_fill = SURFACE_BG;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
+    visuals.widgets.active.bg_fill = SURFACE_BG;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+    visuals.widgets.open.bg_fill = SURFACE_BG_MUTED;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+    ui.spacing_mut().button_padding = Vec2::new(10.0, 10.0);
+    ui.spacing_mut().interact_size.y = 40.0;
 }
 
 fn dark_singleline(ui: &mut egui::Ui, value: &mut String, hint: &str) -> egui::Response {
