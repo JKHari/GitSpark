@@ -716,7 +716,7 @@ impl RustTopApp {
                         change.path.clone()
                     };
 
-                    ui.label(RichText::new(path_text).color(text_color).size(13.0));
+                    ui.label(RichText::new(path_text).color(text_color));
 
                     // Status Icon (Right aligned)
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -860,7 +860,7 @@ impl RustTopApp {
                         ui.label(
                             RichText::new("No file selected")
                                 .color(TEXT_MUTED)
-                                .size(16.0),
+                                .size(14.0),
                         );
                     });
                     return;
@@ -915,14 +915,12 @@ impl RustTopApp {
                                             "{} committed {}",
                                             commit.author_name, commit.date
                                         ))
-                                        .color(TEXT_MUTED)
-                                        .size(12.0),
+                                        .color(TEXT_MUTED),
                                     );
                                     ui.label(
                                         RichText::new(&commit.short_oid)
                                             .monospace()
-                                            .color(TEXT_MUTED)
-                                            .size(12.0),
+                                            .color(TEXT_MUTED),
                                     );
                                 });
                             });
@@ -943,8 +941,7 @@ impl RustTopApp {
                                                     diffs.len()
                                                 ))
                                                 .strong()
-                                                .color(TEXT_MUTED)
-                                                .size(12.0),
+                                                .color(TEXT_MUTED),
                                             );
                                             ui.add_space(8.0);
 

@@ -18,7 +18,7 @@ pub fn icon_button(ui: &mut egui::Ui, icon: &str, tooltip: &str) -> egui::Respon
 
 pub fn compact_action_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     ui.add(
-        egui::Button::new(RichText::new(label).size(12.5).color(TEXT_MAIN))
+        egui::Button::new(RichText::new(label).color(TEXT_MAIN))
             .fill(SURFACE_BG_MUTED)
             .stroke(Stroke::new(1.0, BORDER))
             .corner_radius(4.0),

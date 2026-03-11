@@ -49,14 +49,18 @@ pub fn configure_visuals(ctx: &egui::Context) {
     style.spacing.indent = 14.0;
     style.visuals.window_corner_radius = 6.0.into();
     style.visuals.menu_corner_radius = 6.0.into();
-    style
-        .text_styles
-        .insert(TextStyle::Heading, egui::FontId::proportional(18.0));
-    style
-        .text_styles
-        .insert(TextStyle::Body, egui::FontId::proportional(13.5));
-    style
-        .text_styles
-        .insert(TextStyle::Monospace, egui::FontId::monospace(13.0));
+
+    let proportional = egui::FontFamily::Proportional;
+    let monospace = egui::FontFamily::Monospace;
+
+    style.text_styles = [
+        (TextStyle::Heading, egui::FontId::new(28.0, proportional.clone())),
+        (TextStyle::Name("Heading2".into()), egui::FontId::new(14.0, proportional.clone())), // font-size-md
+        (TextStyle::Body, egui::FontId::new(12.0, proportional.clone())), // font-size
+        (TextStyle::Monospace, egui::FontId::new(11.0, monospace.clone())), // font-size-sm
+        (TextStyle::Button, egui::FontId::new(12.0, proportional.clone())), // font-size
+        (TextStyle::Small, egui::FontId::new(9.0, proportional.clone())), // font-size-xs
+    ].into();
+
     ctx.set_style(style);
 }
