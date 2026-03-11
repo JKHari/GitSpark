@@ -14,7 +14,7 @@ use crate::ai::AiClient;
 use crate::git::GitClient;
 use crate::models::{AppSettings, CommitSuggestion, DiffEntry, GitIdentity, RepoSnapshot};
 use crate::storage::{load_settings, push_recent_repo, save_settings};
-use crate::ui::components::buttons::{compact_action_button, tab_button};
+use crate::ui::components::buttons::tab_button;
 use crate::ui::components::diff::{render_diff_text, render_diff_text_readonly};
 use crate::ui::theme::{
     ACCENT_MUTED, BG, BORDER, DANGER, DIFF_BG, PANEL_BG, SUCCESS, SURFACE_BG, SURFACE_BG_MUTED,
@@ -30,6 +30,12 @@ enum MainTab {
 pub enum SidebarTab {
     Changes,
     History,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SettingsSection {
+    Git,
+    Ai,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -87,10 +93,10 @@ pub struct GitSparkApp {
     settings: AppSettings,
     show_settings: bool,
     show_repo_selector: bool,
+    selected_settings_section: SettingsSection,
     current_repo: Option<RepoSnapshot>,
     repo_identity: GitIdentity,
     repo_filter_text: String,
-    selected_recent_repo: Option<usize>,
     selected_change: Option<String>,
     selected_commit: Option<String>,
     commit_diffs: Option<Vec<DiffEntry>>,
@@ -134,10 +140,10 @@ impl GitSparkApp {
             settings: settings.clone(),
             show_settings: false,
             show_repo_selector: false,
+            selected_settings_section: SettingsSection::Git,
             current_repo: None,
             repo_identity: GitIdentity::default(),
             repo_filter_text: String::new(),
-            selected_recent_repo: None,
             selected_change: None,
             selected_commit: None,
             commit_diffs: None,
@@ -467,7 +473,6 @@ impl GitSparkApp {
 
     fn add_recent_repo(&mut self, path: PathBuf) {
         push_recent_repo(&mut self.settings, path);
-        self.selected_recent_repo = Some(0);
         self.persist_settings();
     }
 
@@ -1403,10 +1408,21 @@ impl GitSparkApp {
                             .stroke(Stroke::new(1.0, BORDER))
                             .show(ui, |ui| {
                                 ui.label(RichText::new("No repository loaded").color(TEXT_MAIN).strong());
-                                ui.label(RichText::new("Use the + button in the header or the recent repository picker to load a repo.").color(TEXT_MUTED));
+                                ui.label(RichText::new("Use the + button in the header or open a repository to get started.").color(TEXT_MUTED));
 
                                 ui.add_space(10.0);
-                                self.render_recent_repos_picker(ui);
+                                if ui
+                                    .add(
+                                        egui::Button::new(RichText::new("Open Repository").color(Color32::WHITE))
+                                            .fill(ACCENT_MUTED)
+                                            .stroke(Stroke::NONE)
+                                            .corner_radius(6.0)
+                                            .min_size(Vec2::new(140.0, 32.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.open_repo_dialog();
+                                }
                             });
                     });
                 }
@@ -2517,104 +2533,433 @@ impl GitSparkApp {
 
     fn render_settings_window(&mut self, ctx: &egui::Context) {
         let mut open = self.show_settings;
-        egui::Window::new(RichText::new("Settings").strong())
+        let mut close_requested = false;
+        let viewport_size = ctx
+            .input(|input| input.viewport().inner_rect.map(|rect| rect.size()))
+            .unwrap_or_else(|| Vec2::new(1280.0, 860.0));
+        let window_width = (viewport_size.x - 56.0).clamp(680.0, 840.0);
+        let window_height = (viewport_size.y - 72.0).clamp(520.0, 760.0);
+
+        egui::Window::new("settings")
             .open(&mut open)
             .collapsible(false)
+            .title_bar(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.set_min_width(400.0);
+            .fixed_size(Vec2::new(window_width, window_height))
+            .frame(
                 egui::Frame::default()
-                    .fill(SURFACE_BG)
-                    .inner_margin(egui::Margin::same(16))
+                    .fill(PANEL_BG)
+                    .stroke(Stroke::NONE)
+                    .inner_margin(egui::Margin::same(0)),
+            )
+            .show(ctx, |ui| {
+                ui.set_min_size(Vec2::new(window_width, window_height));
+
+                egui::Frame::default()
+                    .fill(PANEL_BG)
+                    .inner_margin(egui::Margin::symmetric(24, 18))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.heading(RichText::new("Application Settings").color(TEXT_MAIN));
+                            ui.vertical(|ui| {
+                                ui.label(
+                                    RichText::new("Settings")
+                                        .color(TEXT_MAIN)
+                                        .size(24.0)
+                                        .strong(),
+                                );
+                                ui.add_space(4.0);
+                                ui.label(
+                                    RichText::new(
+                                        "Git configuration, AI commit preferences, and recent repositories.",
+                                    )
+                                    .color(TEXT_MUTED)
+                                    .size(12.0),
+                                );
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                let close = ui.add(
+                                    egui::Button::new(
+                                        RichText::new(icons::X).size(14.0).color(TEXT_MUTED),
+                                    )
+                                    .frame(false)
+                                    .min_size(Vec2::splat(28.0)),
+                                );
+                                if close.clicked() {
+                                    close_requested = true;
+                                }
+                            });
                         });
-                        ui.add_space(20.0);
-
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(8.0);
-
-                        ui.label(RichText::new("Git").color(TEXT_MUTED).small());
-                        ui.label("User Name");
-                        ui.text_edit_singleline(&mut self.repo_identity.user_name);
-                        ui.label("User Email");
-                        ui.text_edit_singleline(&mut self.repo_identity.user_email);
-                        ui.label("Default Branch");
-                        let default_branch = self
-                            .repo_identity
-                            .default_branch
-                            .get_or_insert_with(String::new);
-                        ui.text_edit_singleline(default_branch);
-                        let mut pull_rebase = self.repo_identity.pull_rebase.unwrap_or(false);
-                        ui.checkbox(&mut pull_rebase, "Use pull.rebase");
-                        self.repo_identity.pull_rebase = Some(pull_rebase);
-                        if compact_action_button(ui, "Save Git Config").clicked() {
-                            self.save_git_config();
-                        }
 
                         ui.add_space(14.0);
                         ui.separator();
-                        ui.add_space(8.0);
+                        ui.add_space(10.0);
 
-                        ui.label(RichText::new("AI").color(TEXT_MUTED).small());
-                        ui.label("Recent Repositories");
-                        self.render_recent_repos_picker(ui);
-                        ui.add_space(8.0);
-                        ui.label("Endpoint");
-                        ui.text_edit_singleline(&mut self.settings.ai.endpoint);
-                        ui.label("Model");
-                        ui.text_edit_singleline(&mut self.settings.ai.model);
-                        ui.label("API Key");
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.settings.ai.api_key)
-                                .password(true),
-                        );
-                        ui.label("System Prompt");
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.settings.ai.system_prompt)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(5),
+                        let footer_height = 54.0;
+                        let body_height = (ui.available_height() - footer_height).max(260.0);
+
+                        ui.allocate_ui_with_layout(
+                            Vec2::new(ui.available_width(), body_height),
+                            egui::Layout::left_to_right(Align::Min),
+                            |ui| {
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(180.0, body_height),
+                                    egui::Layout::top_down(Align::Min),
+                                    |ui| {
+                                        self.render_settings_nav(ui);
+                                    },
+                                );
+
+                                let divider_x = ui.min_rect().left() + 196.0;
+                                ui.painter().vline(
+                                    divider_x,
+                                    ui.max_rect().y_range(),
+                                    Stroke::new(1.0, BORDER),
+                                );
+
+                                ui.add_space(28.0);
+
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(ui.available_width(), body_height),
+                                    egui::Layout::top_down(Align::Min),
+                                    |ui| {
+                                        egui::ScrollArea::vertical()
+                                            .id_salt("settings_content_scroll")
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| {
+                                                ui.set_width(ui.available_width());
+                                                match self.selected_settings_section {
+                                                    SettingsSection::Git => {
+                                                        self.render_git_settings_section(ui);
+                                                    }
+                                                    SettingsSection::Ai => {
+                                                        self.render_ai_settings_section(ui);
+                                                    }
+                                                }
+                                            });
+                                    },
+                                );
+                            },
                         );
 
-                        if compact_action_button(ui, "Save Preferences").clicked() {
-                            self.persist_settings();
-                            if self.error_message.is_empty() {
-                                self.status_message = "App settings saved.".to_string();
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(10.0);
+
+                        ui.horizontal(|ui| {
+                            if !self.status_message.is_empty() {
+                                ui.label(
+                                    RichText::new(&self.status_message)
+                                        .color(TEXT_MUTED)
+                                        .size(11.0),
+                                );
                             }
-                        }
+
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                let close = ui.add(
+                                    egui::Button::new(RichText::new("Close").color(TEXT_MAIN))
+                                        .fill(SURFACE_BG_MUTED)
+                                        .stroke(Stroke::NONE)
+                                        .corner_radius(6.0)
+                                        .min_size(Vec2::new(92.0, 34.0)),
+                                );
+                                if close.clicked() {
+                                    close_requested = true;
+                                }
+                            });
+                        });
                     });
             });
+        if close_requested {
+            open = false;
+        }
         self.show_settings = open;
     }
 
-    fn render_recent_repos_picker(&mut self, ui: &mut egui::Ui) {
-        if self.settings.recent_repos.is_empty() {
-            ui.label(RichText::new("No recent repositories yet.").color(TEXT_MUTED));
-            return;
+    fn render_settings_nav(&mut self, ui: &mut egui::Ui) {
+        ui.add_space(6.0);
+        self.render_settings_nav_button(
+            ui,
+            SettingsSection::Git,
+            icons::GIT_BRANCH,
+            "Git",
+            "Identity and pull behavior",
+        );
+        self.render_settings_nav_button(
+            ui,
+            SettingsSection::Ai,
+            icons::SPARKLE,
+            "AI Commit",
+            "Model, endpoint, and prompt",
+        );
+    }
+
+    fn render_settings_nav_button(
+        &mut self,
+        ui: &mut egui::Ui,
+        section: SettingsSection,
+        icon: &str,
+        title: &str,
+        subtitle: &str,
+    ) {
+        let selected = self.selected_settings_section == section;
+        let fill = if selected {
+            color_with_alpha(ACCENT_MUTED, 56.0)
+        } else {
+            Color32::TRANSPARENT
+        };
+        let response = egui::Frame::default()
+            .fill(fill)
+            .stroke(Stroke::NONE)
+            .corner_radius(8.0)
+            .inner_margin(egui::Margin::symmetric(10, 10))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        RichText::new(icon)
+                            .color(if selected { Color32::WHITE } else { TEXT_MUTED })
+                            .size(14.0),
+                    );
+                    ui.add_space(8.0);
+                    ui.vertical(|ui| {
+                        ui.label(
+                            RichText::new(title)
+                                .color(if selected { Color32::WHITE } else { TEXT_MAIN })
+                                .size(13.0)
+                                .strong(),
+                        );
+                        ui.label(
+                            RichText::new(subtitle)
+                                .color(if selected {
+                                    Color32::from_gray(215)
+                                } else {
+                                    TEXT_MUTED
+                                })
+                                .size(10.0),
+                        );
+                    });
+                });
+            })
+            .response
+            .interact(egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        if response.clicked() {
+            self.selected_settings_section = section;
         }
 
-        let selected_text = self
-            .selected_recent_repo
-            .and_then(|index| self.settings.recent_repos.get(index))
-            .map(|path| path.display().to_string())
-            .unwrap_or_else(|| "Choose recent repo".to_string());
-
-        egui::ComboBox::from_id_salt("recent_repos_picker")
-            .selected_text(selected_text)
-            .width(ui.available_width())
-            .show_ui(ui, |ui| {
-                for (index, path) in self.settings.recent_repos.iter().enumerate() {
-                    ui.selectable_value(
-                        &mut self.selected_recent_repo,
-                        Some(index),
-                        path.display().to_string(),
-                    );
-                }
-            });
+        ui.add_space(4.0);
     }
+
+    fn render_git_settings_section(&mut self, ui: &mut egui::Ui) {
+        self.render_settings_section_header(
+            ui,
+            "Git",
+            "Repository Git configuration",
+            self.current_repo
+                .as_ref()
+                .map(|repo| format!("Applies to {}", repo.repo.path.display()))
+                .unwrap_or_else(|| "Open a repository to edit local Git configuration.".to_string()),
+        );
+
+        ui.add_space(8.0);
+        ui.columns(2, |columns| {
+            columns[0].label(RichText::new("User Name").color(TEXT_MUTED).size(11.0));
+            columns[1].label(RichText::new("User Email").color(TEXT_MUTED).size(11.0));
+            dark_singleline(&mut columns[0], &mut self.repo_identity.user_name, "Jane Doe");
+            dark_singleline(
+                &mut columns[1],
+                &mut self.repo_identity.user_email,
+                "jane@example.com",
+            );
+        });
+
+        ui.add_space(16.0);
+        ui.label(RichText::new("Repository Behavior").color(TEXT_MAIN).size(12.0).strong());
+        ui.add_space(8.0);
+        ui.label(RichText::new("Default Branch").color(TEXT_MUTED).size(11.0));
+        let default_branch = self
+            .repo_identity
+            .default_branch
+            .get_or_insert_with(String::new);
+        dark_singleline(ui, default_branch, "main");
+
+        ui.add_space(10.0);
+        let mut pull_rebase = self.repo_identity.pull_rebase.unwrap_or(false);
+        let checkbox = ui.checkbox(&mut pull_rebase, "Use pull.rebase");
+        if checkbox.hovered() {
+            ui.output_mut(|output| output.cursor_icon = egui::CursorIcon::PointingHand);
+        }
+        self.repo_identity.pull_rebase = Some(pull_rebase);
+
+        ui.add_space(18.0);
+        let save = ui.add_enabled(
+            self.current_repo.is_some(),
+            egui::Button::new(RichText::new("Save Git Config").color(Color32::WHITE))
+                .fill(ACCENT_MUTED)
+                .stroke(Stroke::NONE)
+                .corner_radius(6.0)
+                .min_size(Vec2::new(136.0, 34.0)),
+        );
+        if save.clicked() {
+            self.save_git_config();
+        }
+    }
+
+    fn render_ai_settings_section(&mut self, ui: &mut egui::Ui) {
+        self.render_settings_section_header(
+            ui,
+            "AI Commit",
+            "Commit message generation",
+            "These settings control the model and prompt used for AI commit suggestions.".to_string(),
+        );
+
+        ui.add_space(8.0);
+        ui.label(RichText::new("Endpoint").color(TEXT_MUTED).size(11.0));
+        dark_singleline(
+            ui,
+            &mut self.settings.ai.endpoint,
+            "https://api.openai.com/v1/chat/completions",
+        );
+
+        ui.add_space(10.0);
+        ui.columns(2, |columns| {
+            columns[0].label(RichText::new("Provider").color(TEXT_MUTED).size(11.0));
+            columns[1].label(RichText::new("Model").color(TEXT_MUTED).size(11.0));
+
+            render_readonly_field(&mut columns[0], "OpenAI Compatible");
+            dark_singleline(&mut columns[1], &mut self.settings.ai.model, "gpt-4.1-mini");
+        });
+
+        ui.add_space(10.0);
+        ui.label(RichText::new("API Key").color(TEXT_MUTED).size(11.0));
+        dark_password(ui, &mut self.settings.ai.api_key, "sk-...");
+
+        ui.add_space(10.0);
+        ui.label(RichText::new("System Prompt").color(TEXT_MUTED).size(11.0));
+        dark_multiline(
+            ui,
+            &mut self.settings.ai.system_prompt,
+            8,
+            "Write a concise conventional commit message...",
+        );
+
+        ui.add_space(18.0);
+        let save = ui.add(
+            egui::Button::new(RichText::new("Save AI Settings").color(Color32::WHITE))
+                .fill(ACCENT_MUTED)
+                .stroke(Stroke::NONE)
+                .corner_radius(6.0)
+                .min_size(Vec2::new(138.0, 34.0)),
+        );
+        if save.clicked() {
+            self.persist_settings();
+            if self.error_message.is_empty() {
+                self.status_message = "AI settings saved.".to_string();
+            }
+        }
+    }
+
+    fn render_settings_section_header(
+        &self,
+        ui: &mut egui::Ui,
+        eyebrow: &str,
+        title: &str,
+        description: String,
+    ) {
+        ui.label(RichText::new(eyebrow).color(TEXT_MUTED).size(10.0).strong());
+        ui.add_space(6.0);
+        ui.label(RichText::new(title).color(TEXT_MAIN).size(20.0).strong());
+        ui.add_space(6.0);
+        ui.label(RichText::new(description).color(TEXT_MUTED).size(12.0));
+    }
+
+}
+
+fn dark_singleline(ui: &mut egui::Ui, value: &mut String, hint: &str) -> egui::Response {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.inactive.bg_stroke = Stroke::NONE;
+        visuals.widgets.hovered.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
+        visuals.widgets.active.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+        visuals.selection.bg_fill = color_with_alpha(ACCENT_MUTED, 90.0);
+
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(f32::INFINITY)
+                .hint_text(hint)
+                .background_color(SURFACE_BG_MUTED)
+                .margin(Vec2::new(10.0, 9.0)),
+        )
+    })
+    .inner
+}
+
+fn dark_password(ui: &mut egui::Ui, value: &mut String, hint: &str) -> egui::Response {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.inactive.bg_stroke = Stroke::NONE;
+        visuals.widgets.hovered.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
+        visuals.widgets.active.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+        visuals.selection.bg_fill = color_with_alpha(ACCENT_MUTED, 90.0);
+
+        ui.add(
+            egui::TextEdit::singleline(value)
+                .desired_width(f32::INFINITY)
+                .hint_text(hint)
+                .password(true)
+                .background_color(SURFACE_BG_MUTED)
+                .margin(Vec2::new(10.0, 9.0)),
+        )
+    })
+    .inner
+}
+
+fn dark_multiline(
+    ui: &mut egui::Ui,
+    value: &mut String,
+    rows: usize,
+    hint: &str,
+) -> egui::Response {
+    ui.scope(|ui| {
+        let visuals = ui.visuals_mut();
+        visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.inactive.bg_stroke = Stroke::NONE;
+        visuals.widgets.hovered.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
+        visuals.widgets.active.bg_fill = SURFACE_BG_MUTED;
+        visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+        visuals.selection.bg_fill = color_with_alpha(ACCENT_MUTED, 90.0);
+
+        ui.add(
+            egui::TextEdit::multiline(value)
+                .desired_width(f32::INFINITY)
+                .desired_rows(rows)
+                .hint_text(hint)
+                .background_color(SURFACE_BG_MUTED)
+                .margin(Vec2::new(10.0, 10.0)),
+        )
+    })
+    .inner
+}
+
+fn render_readonly_field(ui: &mut egui::Ui, value: &str) {
+    egui::Frame::default()
+        .fill(SURFACE_BG_MUTED)
+        .stroke(Stroke::NONE)
+        .corner_radius(6.0)
+        .inner_margin(egui::Margin::symmetric(10, 10))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new(value).color(TEXT_MAIN).size(12.0));
+        });
 }
 
 impl eframe::App for GitSparkApp {
