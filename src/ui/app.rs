@@ -2281,7 +2281,13 @@ impl GitSparkApp {
                                         );
                                     });
 
-                                egui::CentralPanel::default().show_inside(ui, |ui| {
+                                egui::CentralPanel::default()
+                                    .frame(
+                                        egui::Frame::default()
+                                            .fill(PANEL_BG)
+                                            .inner_margin(0.0),
+                                    )
+                                    .show_inside(ui, |ui| {
                                     egui::ScrollArea::vertical()
                                         .auto_shrink([false, false])
                                         .show(ui, |ui| {
@@ -2298,22 +2304,31 @@ impl GitSparkApp {
                                                     } else {
                                                         Color32::TRANSPARENT
                                                     })
-                                                    .inner_margin(egui::Margin::symmetric(10, 8))
+                                                    .inner_margin(egui::Margin::symmetric(10, 5))
                                                     .show(ui, |ui| {
-                                                        ui.set_min_height(24.0);
                                                         ui.set_width(ui.available_width());
-                                                        ui.add_sized(
-                                                            [ui.available_width(), 16.0],
-                                                            egui::Label::new(
-                                                                RichText::new(&diff.path).color(
-                                                                    if is_selected {
-                                                                        Color32::WHITE
-                                                                    } else {
-                                                                        TEXT_MAIN
-                                                                    },
-                                                                ),
-                                                            )
-                                                            .truncate(),
+                                                        ui.allocate_ui_with_layout(
+                                                            Vec2::new(ui.available_width(), 16.0),
+                                                            egui::Layout::left_to_right(
+                                                                Align::Center,
+                                                            ),
+                                                            |ui| {
+                                                                ui.add(
+                                                                    egui::Label::new(
+                                                                        RichText::new(
+                                                                            truncate_single_line(
+                                                                                &diff.path, 44,
+                                                                            ),
+                                                                        )
+                                                                        .color(if is_selected {
+                                                                            Color32::WHITE
+                                                                        } else {
+                                                                            TEXT_MAIN
+                                                                        }),
+                                                                    )
+                                                                    .truncate(),
+                                                                );
+                                                            },
                                                         );
                                                     })
                                                     .response
@@ -2350,7 +2365,13 @@ impl GitSparkApp {
                                 if let Some(selected_path) = active_selected_path.as_deref() {
                                     Self::render_diff_title(ui, selected_path);
 
-                                    egui::CentralPanel::default().show_inside(ui, |ui| {
+                                    egui::CentralPanel::default()
+                                        .frame(
+                                            egui::Frame::default()
+                                                .fill(DIFF_BG)
+                                                .inner_margin(0.0),
+                                        )
+                                        .show_inside(ui, |ui| {
                                         if let Some(diff) =
                                             diffs.iter().find(|d| d.path == selected_path)
                                         {
@@ -2379,7 +2400,7 @@ impl GitSparkApp {
                                                             &diff.diff,
                                                             selected_path,
                                                         );
-                                                    });
+                                                });
                                             }
                                         }
                                     });
