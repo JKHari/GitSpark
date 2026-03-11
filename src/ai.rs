@@ -202,8 +202,24 @@ fn parse_commit_suggestion(content: &str) -> Result<CommitSuggestion> {
 
 fn parse_suggestion_json(input: &str) -> Result<CommitSuggestion> {
     let value: Value = serde_json::from_str(input)?;
+
+    if let Some(commit_message) = value
+        .get("commit_message")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+    {
+        let (subject, body) = split_commit_message(commit_message)?;
+        return Ok(CommitSuggestion {
+            subject,
+            body,
+            raw: input.trim().to_string(),
+        });
+    }
+
     let subject = value
         .get("subject")
+        .or_else(|| value.get("title"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -211,6 +227,7 @@ fn parse_suggestion_json(input: &str) -> Result<CommitSuggestion> {
         .to_string();
     let body = value
         .get("body")
+        .or_else(|| value.get("description"))
         .and_then(Value::as_str)
         .map(str::trim)
         .unwrap_or_default()
@@ -221,6 +238,18 @@ fn parse_suggestion_json(input: &str) -> Result<CommitSuggestion> {
         body,
         raw: input.trim().to_string(),
     })
+}
+
+fn split_commit_message(message: &str) -> Result<(String, String)> {
+    let mut lines = message.lines().map(str::trim);
+    let subject = lines
+        .find(|line| !line.is_empty())
+        .map(clean_subject_line)
+        .filter(|line| !line.is_empty())
+        .ok_or_else(|| anyhow!("AI response did not include a commit subject"))?;
+
+    let remaining = lines.collect::<Vec<_>>().join("\n");
+    Ok((subject, remaining.trim().to_string()))
 }
 
 fn extract_json_block(input: &str) -> Option<&str> {

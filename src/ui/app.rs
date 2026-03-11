@@ -2117,6 +2117,7 @@ impl GitSparkApp {
                             let summary = egui::TextEdit::singleline(&mut self.commit_summary)
                                 .desired_width(f32::INFINITY)
                                 .hint_text("Summary (required)")
+                                .text_color(Color32::from_rgb(232, 238, 245))
                                 .background_color(SURFACE_BG)
                                 .margin(egui::Margin::symmetric(6, 4));
                             ui.add_sized([ui.available_width(), 24.0], summary);
@@ -2130,13 +2131,28 @@ impl GitSparkApp {
                             .corner_radius(5.0)
                             .inner_margin(egui::Margin::same(0))
                             .show(ui, |ui| {
-                                ui.add_sized(
-                                    [ui.available_width(), 108.0],
-                                    egui::TextEdit::multiline(&mut self.commit_body)
-                                        .desired_width(f32::INFINITY)
-                                        .hint_text("Description")
-                                        .background_color(SURFACE_BG)
-                                        .margin(egui::Margin::symmetric(8, 8)),
+                                let editor_height = 108.0;
+                                ui.allocate_ui_with_layout(
+                                    Vec2::new(ui.available_width(), editor_height),
+                                    egui::Layout::top_down(Align::Min),
+                                    |ui| {
+                                        egui::ScrollArea::vertical()
+                                            .max_height(editor_height)
+                                            .auto_shrink([false, false])
+                                            .show(ui, |ui| {
+                                                ui.add(
+                                                    egui::TextEdit::multiline(
+                                                        &mut self.commit_body,
+                                                    )
+                                                    .desired_width(f32::INFINITY)
+                                                    .desired_rows(5)
+                                                    .hint_text("Description")
+                                                    .text_color(Color32::from_rgb(232, 238, 245))
+                                                    .background_color(SURFACE_BG)
+                                                    .margin(egui::Margin::symmetric(8, 8)),
+                                                );
+                                            });
+                                    },
                                 );
 
                                 let separator_y = ui.cursor().top();
