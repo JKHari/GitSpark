@@ -1,6 +1,6 @@
 use crate::ui::app::SidebarTab;
 use crate::ui::theme::{
-    ACCENT, BORDER, PANEL_BG, SURFACE_BG, SURFACE_BG_MUTED, TEXT_MAIN, TEXT_MUTED,
+    ACCENT, BORDER, SURFACE_BG, SURFACE_BG_MUTED, TEXT_MAIN, TEXT_MUTED,
 };
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use egui_phosphor::regular as icons;
@@ -25,16 +25,22 @@ pub fn compact_action_button(ui: &mut egui::Ui, label: &str) -> egui::Response {
     )
 }
 
-pub fn tab_button(ui: &mut egui::Ui, value: &mut SidebarTab, tab: SidebarTab, label: &str) {
+pub fn tab_button(
+    ui: &mut egui::Ui,
+    value: &mut SidebarTab,
+    tab: SidebarTab,
+    label: &str,
+    width: f32,
+) {
     let active = *value == tab;
     let response = ui.add_sized(
-        [110.0, 30.0],
+        [width, 34.0],
         egui::Button::new(
             RichText::new(label)
                 .color(if active { TEXT_MAIN } else { TEXT_MUTED })
                 .strong(),
         )
-        .fill(if active { SURFACE_BG } else { PANEL_BG })
+        .fill(if active { SURFACE_BG } else { Color32::TRANSPARENT })
         .stroke(Stroke::new(0.0, Color32::TRANSPARENT))
         .corner_radius(0.0),
     );

@@ -1257,13 +1257,40 @@ impl RustTopApp {
     }
 
     fn render_sidebar_tabs(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.set_height(46.0);
-            ui.add_space(4.0);
-            tab_button(ui, &mut self.sidebar_tab, SidebarTab::Changes, "Changes");
-            tab_button(ui, &mut self.sidebar_tab, SidebarTab::History, "History");
-        });
-        ui.separator();
+        egui::Frame::default()
+            .fill(SURFACE_BG_MUTED)
+            .stroke(Stroke::new(1.0, BORDER))
+            .inner_margin(egui::Margin::same(0))
+            .show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.set_height(36.0);
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+
+                let tab_width = ui.available_width() / 2.0;
+                ui.horizontal(|ui| {
+                    tab_button(
+                        ui,
+                        &mut self.sidebar_tab,
+                        SidebarTab::Changes,
+                        "Changes",
+                        tab_width,
+                    );
+                    tab_button(
+                        ui,
+                        &mut self.sidebar_tab,
+                        SidebarTab::History,
+                        "History",
+                        tab_width,
+                    );
+                });
+
+                let divider_x = ui.min_rect().center().x;
+                ui.painter().vline(
+                    divider_x,
+                    ui.min_rect().y_range(),
+                    Stroke::new(1.0, BORDER),
+                );
+            });
     }
 
     fn render_history_sidebar(&mut self, ui: &mut egui::Ui) {
@@ -1529,6 +1556,7 @@ impl RustTopApp {
     fn render_changes_header(&mut self, ui: &mut egui::Ui) {
         egui::Frame::default()
             .fill(SURFACE_BG)
+            .stroke(Stroke::new(1.0, BORDER))
             .inner_margin(egui::Margin::symmetric(10, 8))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
