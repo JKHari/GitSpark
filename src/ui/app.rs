@@ -2900,13 +2900,17 @@ impl GitSparkApp {
         );
 
         ui.add_space(18.0);
-        let save = ui.add(
-            egui::Button::new(RichText::new("Save").color(Color32::WHITE).strong())
-                .fill(ACCENT_MUTED)
-                .stroke(Stroke::NONE)
-                .corner_radius(6.0)
-                .min_size(Vec2::new(ui.available_width(), 38.0)),
-        );
+        let save = ui
+            .horizontal_centered(|ui| {
+                ui.add(
+                    egui::Button::new(RichText::new("Save").color(Color32::WHITE).strong())
+                        .fill(ACCENT_MUTED)
+                        .stroke(Stroke::NONE)
+                        .corner_radius(6.0)
+                        .min_size(Vec2::new(124.0, 38.0)),
+                )
+            })
+            .inner;
         if save.clicked() {
             self.settings.ai.endpoint = self.settings.ai.provider.default_endpoint().to_string();
             self.persist_settings();
@@ -2938,7 +2942,7 @@ impl GitSparkApp {
                         if self.settings.ai.provider == AiProvider::OpenRouter {
                             self.ensure_openrouter_models();
                         }
-                        ui.close_menu();
+                        ui.memory_mut(|mem| mem.close_popup());
                     }
                 }
             },
@@ -3022,7 +3026,7 @@ impl GitSparkApp {
 
                                         if response.clicked() {
                                             self.settings.ai.model = model.id;
-                                            ui.close_menu();
+                                            ui.memory_mut(|mem| mem.close_popup());
                                         }
                                     }
                                 });
@@ -3095,34 +3099,24 @@ fn render_settings_dropdown(
     add_popup_contents: impl FnOnce(&mut egui::Ui),
 ) {
     let popup_id = ui.make_persistent_id(id_salt);
-    let button = egui::Frame::default()
-        .fill(SURFACE_BG_MUTED)
-        .stroke(Stroke::new(1.0, color_with_alpha(BORDER, 210.0)))
-        .corner_radius(8.0)
-        .inner_margin(egui::Margin::symmetric(12, 8))
-        .show(ui, |ui| {
-            let (rect, response) =
-                ui.allocate_exact_size(Vec2::new(width, 20.0), egui::Sense::click());
-            ui.painter().text(
-                rect.left_center(),
-                Align2::LEFT_CENTER,
-                selected_text,
-                egui::FontId::proportional(12.0),
-                TEXT_MAIN,
-            );
-            ui.painter().text(
-                rect.right_center() - Vec2::new(2.0, 0.0),
-                Align2::RIGHT_CENTER,
-                icons::CARET_DOWN,
-                egui::FontId::proportional(12.0),
-                TEXT_MUTED,
-            );
-            response
-        });
-    let response = button
-        .inner
-        .union(button.response)
-        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let height = 34.0;
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::click());
+    ui.painter().rect_filled(rect, 8.0, SURFACE_BG_MUTED);
+    ui.painter().text(
+        rect.left_center() + Vec2::new(12.0, 0.0),
+        Align2::LEFT_CENTER,
+        selected_text,
+        egui::FontId::proportional(12.0),
+        TEXT_MAIN,
+    );
+    ui.painter().text(
+        rect.right_center() - Vec2::new(12.0, 0.0),
+        Align2::RIGHT_CENTER,
+        icons::CARET_DOWN,
+        egui::FontId::proportional(12.0),
+        TEXT_MUTED,
+    );
+    let response = response.on_hover_cursor(egui::CursorIcon::PointingHand);
 
     if response.clicked() {
         ui.memory_mut(|mem| mem.toggle_popup(popup_id));
@@ -3144,7 +3138,7 @@ fn render_settings_dropdown(
                 egui::Frame::default()
                     .fill(SURFACE_BG_MUTED)
                     .stroke(Stroke::new(1.0, color_with_alpha(BORDER, 210.0)))
-                    .corner_radius(8.0)
+                    .corner_radius(0.0)
                     .inner_margin(egui::Margin::same(8))
                     .show(ui, |ui| {
                         add_popup_contents(ui);
@@ -3162,7 +3156,7 @@ fn render_settings_dropdown_row(ui: &mut egui::Ui, label: &str, is_selected: boo
             Color32::TRANSPARENT
         })
         .stroke(Stroke::NONE)
-        .corner_radius(6.0)
+        .corner_radius(0.0)
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -3177,7 +3171,7 @@ fn render_settings_dropdown_row(ui: &mut egui::Ui, label: &str, is_selected: boo
         .on_hover_cursor(egui::CursorIcon::PointingHand);
 
     if response.hovered() && !is_selected {
-        ui.painter().rect_filled(response.rect, 6.0, SURFACE_BG);
+        ui.painter().rect_filled(response.rect, 0.0, SURFACE_BG);
         ui.painter().text(
             response.rect.left_center() + Vec2::new(10.0, 0.0),
             Align2::LEFT_CENTER,
