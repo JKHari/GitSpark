@@ -1315,6 +1315,7 @@ impl RustTopApp {
         ui.horizontal(|ui| {
             let edit = egui::TextEdit::singleline(&mut self.filter_text)
                 .hint_text("Filter files")
+                .background_color(SURFACE_BG)
                 .desired_width(f32::INFINITY)
                 .margin(egui::Margin::symmetric(4, 4));
 
@@ -1682,6 +1683,7 @@ impl RustTopApp {
                             let summary = egui::TextEdit::singleline(&mut self.commit_summary)
                                 .desired_width(f32::INFINITY)
                                 .hint_text("Summary (required)")
+                                .background_color(SURFACE_BG)
                                 .margin(egui::Margin::symmetric(6, 4));
                             ui.add_sized([ui.available_width(), 24.0], summary);
                         });
@@ -1699,6 +1701,7 @@ impl RustTopApp {
                                     egui::TextEdit::multiline(&mut self.commit_body)
                                         .desired_width(f32::INFINITY)
                                         .hint_text("Description")
+                                        .background_color(SURFACE_BG)
                                         .margin(egui::Margin::symmetric(8, 8)),
                                 );
 
