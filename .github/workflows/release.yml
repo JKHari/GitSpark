@@ -174,12 +174,14 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
         run: |
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+          if gh release view "$RELEASE_TAG" --repo "$GH_REPO" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --repo "$GH_REPO" --clobber
           else
             gh release create "$RELEASE_TAG" dist/* \
+              --repo "$GH_REPO" \
               --verify-tag \
               --generate-notes \
               --title "$RELEASE_TAG"
