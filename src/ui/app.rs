@@ -52,8 +52,10 @@ pub struct RustTopApp {
     git: GitClient,
     settings: AppSettings,
     show_settings: bool,
+    show_repo_selector: bool,
     current_repo: Option<RepoSnapshot>,
     repo_identity: GitIdentity,
+    repo_filter_text: String,
     selected_recent_repo: Option<usize>,
     selected_change: Option<String>,
     selected_commit: Option<String>,
@@ -92,8 +94,10 @@ impl RustTopApp {
             git: GitClient::new(),
             settings: settings.clone(),
             show_settings: false,
+            show_repo_selector: false,
             current_repo: None,
             repo_identity: GitIdentity::default(),
+            repo_filter_text: String::new(),
             selected_recent_repo: None,
             selected_change: None,
             selected_commit: None,
@@ -129,6 +133,7 @@ impl RustTopApp {
     fn open_repo(&mut self, path: PathBuf) {
         self.status_message = "Loading repository...".to_string();
         self.error_message.clear();
+        self.show_repo_selector = false;
         self.add_recent_repo(path.clone());
         let tx = self.event_tx.clone();
         let ctx = self.ctx.clone();
@@ -460,14 +465,12 @@ impl RustTopApp {
                         Vec2::new(238.0, 52.0),
                         egui::Layout::top_down(Align::Min),
                         |ui| {
-                            self.render_dropdown_toolbar_block(
+                            self.render_repository_toolbar_trigger(
                                 ui,
-                                "toolbar_repo",
                                 icons::FOLDER_NOTCH_OPEN,
                                 "Current Repository",
                                 &repo_title,
                                 238.0,
-                                |app, ui| app.render_repository_toolbar_menu(ui),
                             );
                         },
                     );
@@ -555,23 +558,70 @@ impl RustTopApp {
             ui.memory_mut(|mem| mem.toggle_popup(popup_id));
         }
 
-        egui::popup_below_widget(
-            ui,
-            popup_id,
-            &response,
-            PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                ui.set_min_width(width.max(260.0));
-                egui::Frame::default()
-                    .fill(PANEL_BG)
-                    .stroke(Stroke::NONE)
-                    .corner_radius(6.0)
-                    .inner_margin(egui::Margin::same(10))
-                    .show(ui, |ui| {
-                        add_popup_contents(self, ui);
-                    });
-            },
-        );
+        ui.scope(|ui| {
+            let visuals = &mut ui.style_mut().visuals;
+            visuals.window_fill = PANEL_BG;
+            visuals.window_stroke = Stroke::NONE;
+            visuals.popup_shadow = egui::epaint::Shadow::NONE;
+
+            egui::popup_below_widget(
+                ui,
+                popup_id,
+                &response,
+                PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    ui.set_min_width(width.max(260.0));
+                    egui::Frame::default()
+                        .fill(PANEL_BG)
+                        .stroke(Stroke::NONE)
+                        .corner_radius(6.0)
+                        .inner_margin(egui::Margin::same(10))
+                        .show(ui, |ui| {
+                            add_popup_contents(self, ui);
+                        });
+                },
+            );
+        });
+    }
+
+    fn render_repository_toolbar_trigger(
+        &mut self,
+        ui: &mut egui::Ui,
+        icon: &str,
+        description: &str,
+        title: &str,
+        width: f32,
+    ) {
+        let response = egui::Frame::default()
+            .fill(Color32::TRANSPARENT)
+            .stroke(Stroke::NONE)
+            .corner_radius(0.0)
+            .inner_margin(egui::Margin::same(0))
+            .show(ui, |ui| {
+                ui.set_min_size(Vec2::new(width, 52.0));
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.add_sized(
+                        [18.0, 52.0],
+                        egui::Label::new(RichText::new(icon).size(15.0).color(TEXT_MUTED)),
+                    );
+                    ui.add_space(12.0);
+                    render_toolbar_text_stack(
+                        ui,
+                        description,
+                        title,
+                        width - 76.0,
+                        Some(icons::CARET_DOWN),
+                    );
+                });
+            })
+            .response
+            .interact(egui::Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+        if response.clicked() {
+            self.show_repo_selector = !self.show_repo_selector;
+        }
     }
 
     fn render_repository_toolbar_menu(&mut self, ui: &mut egui::Ui) {
@@ -629,6 +679,167 @@ impl RustTopApp {
             self.refresh_repo();
             ui.close_menu();
         }
+    }
+
+    fn render_repository_sidebar_overlay(&mut self, ui: &mut egui::Ui) {
+        egui::Frame::default()
+            .fill(PANEL_BG)
+            .inner_margin(egui::Margin::same(0))
+            .show(ui, |ui| {
+                egui::TopBottomPanel::top("repo_selector_header")
+                    .resizable(false)
+                    .frame(
+                        egui::Frame::default()
+                            .fill(PANEL_BG)
+                            .inner_margin(egui::Margin::symmetric(12, 10)),
+                    )
+                    .show_inside(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(icons::FOLDER_NOTCH_OPEN).color(TEXT_MUTED));
+                            ui.add_space(6.0);
+                            ui.vertical(|ui| {
+                                ui.spacing_mut().item_spacing.y = 1.0;
+                                ui.label(
+                                    RichText::new("Current Repository")
+                                        .small()
+                                        .color(TEXT_MUTED),
+                                );
+                                ui.label(
+                                    RichText::new(
+                                        self.current_repo
+                                            .as_ref()
+                                            .map(|snapshot| snapshot.repo.name.as_str())
+                                            .unwrap_or("Choose repository"),
+                                    )
+                                    .strong()
+                                    .color(TEXT_MAIN),
+                                );
+                            });
+                            ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                                if ui
+                                    .add(
+                                        egui::Button::new(
+                                            RichText::new(icons::CARET_UP).color(TEXT_MUTED),
+                                        )
+                                        .fill(Color32::TRANSPARENT)
+                                        .stroke(Stroke::NONE)
+                                        .min_size(Vec2::new(20.0, 20.0)),
+                                    )
+                                    .clicked()
+                                {
+                                    self.show_repo_selector = false;
+                                }
+                            });
+                        });
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            let filter = egui::TextEdit::singleline(&mut self.repo_filter_text)
+                                .hint_text("Filter")
+                                .desired_width(ui.available_width() - 112.0)
+                                .margin(egui::Margin::symmetric(8, 6));
+                            ui.add_sized([ui.available_width() - 96.0, 32.0], filter);
+
+                            let add_button = egui::Button::new(
+                                RichText::new("Add  ▾").color(TEXT_MAIN).strong(),
+                            )
+                            .fill(SURFACE_BG)
+                            .stroke(Stroke::new(1.0, BORDER))
+                            .corner_radius(8.0);
+                            if ui.add_sized([88.0, 32.0], add_button).clicked() {
+                                self.open_repo_dialog();
+                            }
+                        });
+                    });
+
+                egui::CentralPanel::default()
+                    .frame(
+                        egui::Frame::default()
+                            .fill(PANEL_BG)
+                            .inner_margin(egui::Margin::symmetric(12, 0)),
+                    )
+                    .show_inside(ui, |ui| {
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                if self.settings.recent_repos.is_empty() {
+                                    ui.add_space(12.0);
+                                    ui.label(
+                                        RichText::new("No recent repositories")
+                                            .color(TEXT_MUTED),
+                                    );
+                                    return;
+                                }
+
+                                for path in self.settings.recent_repos.clone() {
+                                    let is_current = self
+                                        .current_repo
+                                        .as_ref()
+                                        .map(|snapshot| snapshot.repo.path == path)
+                                        .unwrap_or(false);
+                                    let repo_name = path
+                                        .file_name()
+                                        .and_then(|name| name.to_str())
+                                        .unwrap_or("Repository");
+                                    if !self.repo_filter_text.trim().is_empty()
+                                        && !repo_name
+                                            .to_ascii_lowercase()
+                                            .contains(&self.repo_filter_text.to_ascii_lowercase())
+                                        && !path
+                                            .display()
+                                            .to_string()
+                                            .to_ascii_lowercase()
+                                            .contains(&self.repo_filter_text.to_ascii_lowercase())
+                                    {
+                                        continue;
+                                    }
+
+                                    let response = egui::Frame::default()
+                                        .fill(if is_current {
+                                            SURFACE_BG
+                                        } else {
+                                            Color32::TRANSPARENT
+                                        })
+                                        .inner_margin(egui::Margin::symmetric(2, 8))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                ui.label(
+                                                    RichText::new(if is_current {
+                                                        icons::CHECK
+                                                    } else {
+                                                        icons::FOLDER_NOTCH_OPEN
+                                                    })
+                                                    .color(TEXT_MUTED),
+                                                );
+                                                ui.add_space(8.0);
+                                                ui.add_sized(
+                                                    [ui.available_width(), 20.0],
+                                                    egui::Label::new(
+                                                        RichText::new(repo_name)
+                                                            .color(TEXT_MAIN)
+                                                            .strong(),
+                                                    )
+                                                    .truncate(),
+                                                );
+                                            });
+                                        })
+                                        .response
+                                        .interact(egui::Sense::click())
+                                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+
+                                    ui.painter().hline(
+                                        response.rect.x_range(),
+                                        response.rect.bottom(),
+                                        Stroke::new(1.0, BORDER),
+                                    );
+
+                                    if response.clicked() {
+                                        self.open_repo(path);
+                                    }
+                                }
+                            });
+                    });
+            });
     }
 
     fn render_branch_toolbar_menu(&mut self, ui: &mut egui::Ui) {
@@ -785,16 +996,23 @@ impl RustTopApp {
             ui.memory_mut(|mem| mem.toggle_popup(popup_id));
         }
 
-        egui::popup_below_widget(
-            ui,
-            popup_id,
-            &block.response,
-            PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                ui.set_min_width(246.0);
-                self.render_network_toolbar_menu(ui, &snapshot, &remote_name, primary_action);
-            },
-        );
+        ui.scope(|ui| {
+            let visuals = &mut ui.style_mut().visuals;
+            visuals.window_fill = PANEL_BG;
+            visuals.window_stroke = Stroke::NONE;
+            visuals.popup_shadow = egui::epaint::Shadow::NONE;
+
+            egui::popup_below_widget(
+                ui,
+                popup_id,
+                &block.response,
+                PopupCloseBehavior::CloseOnClickOutside,
+                |ui| {
+                    ui.set_min_width(246.0);
+                    self.render_network_toolbar_menu(ui, &snapshot, &remote_name, primary_action);
+                },
+            );
+        });
     }
 
     fn render_disabled_network_toolbar_block(&self, ui: &mut egui::Ui) {
@@ -900,6 +1118,11 @@ impl RustTopApp {
                     .inner_margin(egui::Margin::same(0)),
             )
             .show(ctx, |ui| {
+                if self.show_repo_selector {
+                    self.render_repository_sidebar_overlay(ui);
+                    return;
+                }
+
                 self.render_sidebar_tabs(ui);
 
                 if self.current_repo.is_some() {
