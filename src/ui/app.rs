@@ -2587,7 +2587,8 @@ impl GitSparkApp {
             .frame(
                 egui::Frame::default()
                     .fill(PANEL_BG)
-                    .stroke(Stroke::NONE)
+                    .stroke(Stroke::new(1.0, color_with_alpha(BORDER, 230.0)))
+                    .corner_radius(8.0)
                     .inner_margin(egui::Margin::same(0)),
             )
             .show(ctx, |ui| {
@@ -2595,6 +2596,7 @@ impl GitSparkApp {
 
                 egui::Frame::default()
                     .fill(PANEL_BG)
+                    .corner_radius(8.0)
                     .inner_margin(egui::Margin::symmetric(24, 18))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
