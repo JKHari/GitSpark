@@ -7,7 +7,7 @@ use crate::models::AppSettings;
 
 pub fn config_path() -> Result<PathBuf> {
     let base = dirs::config_dir().context("could not determine config dir")?;
-    Ok(base.join("github-rusttop").join("settings.toml"))
+    Ok(base.join("gitspark").join("settings.toml"))
 }
 
 pub fn load_settings() -> Result<AppSettings> {

@@ -14,8 +14,8 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native(
-        "github-rusttop",
+        "GitSpark",
         options,
-        Box::new(|cc| Ok(Box::new(ui::RustTopApp::new(cc)))),
+        Box::new(|cc| Ok(Box::new(ui::GitSparkApp::new(cc)))),
     )
 }

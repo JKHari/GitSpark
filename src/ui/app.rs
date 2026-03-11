@@ -71,7 +71,7 @@ enum AppEvent {
     CommitDiffLoaded(String, Result<Vec<DiffEntry>, String>),
 }
 
-pub struct RustTopApp {
+pub struct GitSparkApp {
     ctx: egui::Context,
     git: GitClient,
     settings: AppSettings,
@@ -100,7 +100,7 @@ pub struct RustTopApp {
     event_rx: Receiver<AppEvent>,
 }
 
-impl RustTopApp {
+impl GitSparkApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         let mut fonts = egui::FontDefinitions::default();
         egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
@@ -2432,7 +2432,7 @@ impl RustTopApp {
     }
 }
 
-impl eframe::App for RustTopApp {
+impl eframe::App for GitSparkApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         while let Ok(event) = self.event_rx.try_recv() {
             match event {
@@ -2530,7 +2530,7 @@ impl eframe::App for RustTopApp {
     }
 }
 
-impl RustTopApp {
+impl GitSparkApp {
     fn render_menu_bar(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("menu_bar")
             .exact_height(28.0)
