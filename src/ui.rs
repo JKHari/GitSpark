@@ -1,4 +1,6 @@
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::thread;
 
 use eframe::egui::{self, Align, Align2, Color32, RichText, Stroke, TextStyle, Vec2};
 use egui_phosphor::regular as icons;
@@ -35,9 +37,19 @@ enum SidebarTab {
     History,
 }
 
+enum AppEvent {
+    RepoLoaded(Result<RepoSnapshot, String>),
+    RepoRefreshed(Result<RepoSnapshot, String>),
+    BranchSwitched(Result<RepoSnapshot, String>, String),
+    BranchMerged(Result<RepoSnapshot, String>, String),
+    CommitCreated(Result<RepoSnapshot, String>),
+    AiCommitGenerated(Result<CommitSuggestion, String>),
+    CommitDiffLoaded(String, Result<Vec<DiffEntry>, String>),
+}
+
 pub struct RustTopApp {
+    ctx: egui::Context,
     git: GitClient,
-    ai: AiClient,
     settings: AppSettings,
     show_settings: bool,
     current_repo: Option<RepoSnapshot>,
@@ -49,13 +61,16 @@ pub struct RustTopApp {
     selected_commit_file: Option<String>,
     branch_target: String,
     merge_target: String,
-    commit_message: String,
+    commit_summary: String,
+    commit_body: String,
     ai_preview: Option<CommitSuggestion>,
     status_message: String,
     error_message: String,
     main_tab: MainTab,
     sidebar_tab: SidebarTab,
     filter_text: String,
+    event_tx: Sender<AppEvent>,
+    event_rx: Receiver<AppEvent>,
 }
 
 impl RustTopApp {
@@ -71,9 +86,10 @@ impl RustTopApp {
             Err(err) => (AppSettings::default(), err.to_string()),
         };
 
+        let (event_tx, event_rx) = mpsc::channel();
         let mut app = Self {
+            ctx: cc.egui_ctx.clone(),
             git: GitClient::new(),
-            ai: AiClient::new(),
             settings: settings.clone(),
             show_settings: false,
             current_repo: None,
@@ -85,13 +101,16 @@ impl RustTopApp {
             selected_commit_file: None,
             branch_target: String::new(),
             merge_target: String::new(),
-            commit_message: String::new(),
+            commit_summary: String::new(),
+            commit_body: String::new(),
             ai_preview: None,
             status_message: "Open a repository to get started.".to_string(),
             error_message,
             main_tab: MainTab::Workspace,
             sidebar_tab: SidebarTab::Changes,
             filter_text: String::new(),
+            event_tx,
+            event_rx,
         };
 
         if let Some(last_repo) = settings.recent_repos.first() {
@@ -108,17 +127,17 @@ impl RustTopApp {
     }
 
     fn open_repo(&mut self, path: PathBuf) {
-        match self.git.open_repo(path.clone()) {
-            Ok(snapshot) => {
-                self.adopt_snapshot(snapshot);
-                self.add_recent_repo(path);
-                self.status_message = "Repository loaded.".to_string();
-                self.error_message.clear();
-            }
-            Err(err) => {
-                self.error_message = format!("Failed to open repository: {err}");
-            }
-        }
+        self.status_message = "Loading repository...".to_string();
+        self.error_message.clear();
+        self.add_recent_repo(path.clone());
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.open_repo(path).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::RepoLoaded(res));
+            ctx.request_repaint();
+        });
     }
 
     fn refresh_repo(&mut self) {
@@ -127,14 +146,16 @@ impl RustTopApp {
             return;
         };
 
-        match self.git.refresh_repo(&path) {
-            Ok(snapshot) => {
-                self.adopt_snapshot(snapshot);
-                self.status_message = "Repository refreshed.".to_string();
-                self.error_message.clear();
-            }
-            Err(err) => self.error_message = format!("Refresh failed: {err}"),
-        }
+        self.status_message = "Refreshing repository...".to_string();
+        self.error_message.clear();
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.refresh_repo(&path).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::RepoRefreshed(res));
+            ctx.request_repaint();
+        });
     }
 
     fn switch_branch(&mut self) {
@@ -143,22 +164,22 @@ impl RustTopApp {
             return;
         };
 
-        if self.branch_target.trim().is_empty() {
+        let target = self.branch_target.trim().to_string();
+        if target.is_empty() {
             self.error_message = "Choose a branch first.".to_string();
             return;
         }
 
-        match self.git.switch_branch(&path, self.branch_target.trim()) {
-            Ok(snapshot) => {
-                self.adopt_snapshot(snapshot);
-                self.status_message =
-                    format!("Switched to branch '{}'.", self.branch_target.trim());
-                self.error_message.clear();
-            }
-            Err(err) => {
-                self.error_message = format!("Branch switch failed: {err}");
-            }
-        }
+        self.status_message = format!("Switching to '{}'...", target);
+        self.error_message.clear();
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.switch_branch(&path, &target).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::BranchSwitched(res, target));
+            ctx.request_repaint();
+        });
     }
 
     fn merge_branch(&mut self) {
@@ -167,21 +188,22 @@ impl RustTopApp {
             return;
         };
 
-        if self.merge_target.trim().is_empty() {
+        let target = self.merge_target.trim().to_string();
+        if target.is_empty() {
             self.error_message = "Choose a branch to merge.".to_string();
             return;
         }
 
-        match self.git.merge_branch(&path, self.merge_target.trim()) {
-            Ok(snapshot) => {
-                self.adopt_snapshot(snapshot);
-                self.status_message = format!("Merged '{}'.", self.merge_target.trim());
-                self.error_message.clear();
-            }
-            Err(err) => {
-                self.error_message = format!("Merge failed: {err}");
-            }
-        }
+        self.status_message = format!("Merging '{}'...", target);
+        self.error_message.clear();
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.merge_branch(&path, &target).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::BranchMerged(res, target));
+            ctx.request_repaint();
+        });
     }
 
     fn commit_all(&mut self) {
@@ -190,24 +212,27 @@ impl RustTopApp {
             return;
         };
 
-        let message = self.commit_message.trim();
-        if message.is_empty() {
-            self.error_message = "Commit message cannot be empty.".to_string();
+        if self.commit_summary.trim().is_empty() {
+            self.error_message = "Commit summary cannot be empty.".to_string();
             return;
         }
 
-        match self.git.commit_all(&path, message) {
-            Ok(snapshot) => {
-                self.adopt_snapshot(snapshot);
-                self.commit_message.clear();
-                self.ai_preview = None;
-                self.status_message = "Commit created.".to_string();
-                self.error_message.clear();
-            }
-            Err(err) => {
-                self.error_message = format!("Commit failed: {err}");
-            }
-        }
+        let message = if self.commit_body.trim().is_empty() {
+            self.commit_summary.trim().to_string()
+        } else {
+            format!("{}\n\n{}", self.commit_summary.trim(), self.commit_body.trim())
+        };
+
+        self.status_message = "Creating commit...".to_string();
+        self.error_message.clear();
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.commit_all(&path, &message).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::CommitCreated(res));
+            ctx.request_repaint();
+        });
     }
 
     fn generate_ai_commit(&mut self) {
@@ -230,21 +255,17 @@ impl RustTopApp {
             return;
         }
 
-        match self.ai.generate_commit_message(&self.settings.ai, &diff) {
-            Ok(suggestion) => {
-                self.commit_message = if suggestion.body.trim().is_empty() {
-                    suggestion.subject.clone()
-                } else {
-                    format!("{}\n\n{}", suggestion.subject, suggestion.body)
-                };
-                self.ai_preview = Some(suggestion);
-                self.status_message = "Generated commit suggestion.".to_string();
-                self.error_message.clear();
-            }
-            Err(err) => {
-                self.error_message = format!("AI generation failed: {err}");
-            }
-        }
+        self.status_message = "Generating AI commit suggestion...".to_string();
+        self.error_message.clear();
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let ai = AiClient::new();
+        let settings = self.settings.ai.clone();
+        thread::spawn(move || {
+            let res = ai.generate_commit_message(&settings, &diff).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::AiCommitGenerated(res));
+            ctx.request_repaint();
+        });
     }
 
     fn save_git_config(&mut self) {
@@ -433,11 +454,11 @@ impl RustTopApp {
                             // Commit area at the bottom
                             egui::TopBottomPanel::bottom("commit_area_panel")
                                 .resizable(false)
-                                .min_height(160.0)
+                                .min_height(170.0)
                                 .frame(
                                     egui::Frame::default()
                                         .fill(PANEL_BG)
-                                        .inner_margin(egui::Margin::same(0))
+                                        .inner_margin(egui::Margin::symmetric(0, 4))
                                         .stroke(Stroke::new(1.0, BORDER)),
                                 )
                                 .show_inside(ui, |ui| {
@@ -508,7 +529,8 @@ impl RustTopApp {
 
     fn render_sidebar_tabs(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            ui.set_height(42.0);
+            ui.set_height(46.0);
+            ui.add_space(4.0);
             tab_button(ui, &mut self.sidebar_tab, SidebarTab::Changes, "Changes");
             tab_button(ui, &mut self.sidebar_tab, SidebarTab::History, "History");
         });
@@ -524,7 +546,7 @@ impl RustTopApp {
                         let is_selected = self.selected_commit.as_ref() == Some(&commit.oid);
 
                         let rect = ui.available_rect_before_wrap();
-                        let desired_height = 50.0;
+                        let desired_height = 56.0;
                         let item_rect = egui::Rect::from_min_size(
                             rect.min,
                             Vec2::new(rect.width(), desired_height),
@@ -541,6 +563,7 @@ impl RustTopApp {
                         };
 
                         ui.painter().rect_filled(item_rect, 0.0, bg_color);
+                        ui.painter().hline(item_rect.x_range(), item_rect.bottom(), Stroke::new(1.0, Color32::from_black_alpha(20)));
 
                         if response.clicked() {
                             if self.selected_commit.as_deref() != Some(&commit.oid) {
@@ -548,25 +571,24 @@ impl RustTopApp {
                                 self.commit_diffs = None;
                                 self.selected_commit_file = None;
                                 
-                                // Ideally this should be async, but for now we do it sync to get the data
                                 if let Some(repo) = &self.current_repo {
-                                    match self.git.get_commit_diff(&repo.repo.path, &commit.oid) {
-                                        Ok(diffs) => {
-                                            if let Some(first) = diffs.first() {
-                                                self.selected_commit_file = Some(first.path.clone());
-                                            }
-                                            self.commit_diffs = Some(diffs);
-                                        }
-                                        Err(e) => {
-                                            self.error_message = format!("Failed to load commit details: {}", e);
-                                        }
-                                    }
+                                    let tx = self.event_tx.clone();
+                                    let ctx = self.ctx.clone();
+                                    let git = GitClient::new();
+                                    let path = repo.repo.path.clone();
+                                    let oid = commit.oid.clone();
+                                    
+                                    thread::spawn(move || {
+                                        let res = git.get_commit_diff(&path, &oid).map_err(|e| e.to_string());
+                                        let _ = tx.send(AppEvent::CommitDiffLoaded(oid, res));
+                                        ctx.request_repaint();
+                                    });
                                 }
                             }
                         }
 
                         // Summary
-                        let summary_pos = item_rect.min + Vec2::new(8.0, 8.0);
+                        let summary_pos = item_rect.min + Vec2::new(14.0, 10.0);
                         ui.painter().text(
                             summary_pos,
                             Align2::LEFT_TOP,
@@ -576,13 +598,13 @@ impl RustTopApp {
                         );
 
                         // Author & OID
-                        let meta_pos = item_rect.min + Vec2::new(8.0, 28.0);
+                        let meta_pos = item_rect.min + Vec2::new(14.0, 32.0);
                         let meta_text = format!("{} • {}", commit.author_name, commit.short_oid);
                         ui.painter().text(
                             meta_pos,
                             Align2::LEFT_TOP,
                             meta_text,
-                            egui::FontId::proportional(11.0),
+                            egui::FontId::proportional(12.0),
                             if is_selected { Color32::LIGHT_GRAY } else { TEXT_MUTED },
                         );
                         
@@ -705,13 +727,13 @@ impl RustTopApp {
     fn render_commit_sidebar(&mut self, ui: &mut egui::Ui) {
         egui::Frame::default()
             .fill(SURFACE_BG)
-            .stroke(Stroke::new(1.0, BORDER))
-            .inner_margin(egui::Margin::same(12))
+            .inner_margin(egui::Margin::symmetric(14, 12))
             .show(ui, |ui| {
                 ui.vertical(|ui| {
+                    ui.add_space(2.0);
                     // Summary Input
                     ui.add(
-                        egui::TextEdit::singleline(&mut self.commit_message)
+                        egui::TextEdit::singleline(&mut self.commit_summary)
                             .desired_width(f32::INFINITY)
                             .hint_text("Summary (required)")
                             .margin(egui::Margin::symmetric(4, 4))
@@ -720,9 +742,8 @@ impl RustTopApp {
                     ui.add_space(6.0);
                     
                     // Description Input
-                    let body = commit_body_mut(&mut self.commit_message);
                     ui.add(
-                        egui::TextEdit::multiline(body)
+                        egui::TextEdit::multiline(&mut self.commit_body)
                             .desired_width(f32::INFINITY)
                             .desired_rows(4)
                             .hint_text("Description")
@@ -771,7 +792,7 @@ impl RustTopApp {
                                 .strong()
                         )
                         .fill(ACCENT)
-                        .rounding(4.0)
+                        .corner_radius(4.0)
                         .min_size(Vec2::new(0.0, 32.0));
 
                         ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
@@ -812,31 +833,8 @@ impl RustTopApp {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                                
-                                for line in diff_text.lines() {
-                                    let (bg_color, text_color) = if line.starts_with('+') && !line.starts_with("+++") {
-                                        (Color32::from_rgba_premultiplied(40, 167, 69, 50), TEXT_MAIN)
-                                    } else if line.starts_with('-') && !line.starts_with("---") {
-                                        (Color32::from_rgba_premultiplied(215, 58, 73, 50), TEXT_MAIN)
-                                    } else if line.starts_with("@@") {
-                                        (SURFACE_BG_ALT, ACCENT)
-                                    } else {
-                                        (Color32::TRANSPARENT, TEXT_MUTED)
-                                    };
-
-                                    egui::Frame::default()
-                                        .fill(bg_color)
-                                        .inner_margin(egui::Margin::symmetric(8, 2))
-                                        .show(ui, |ui| {
-                                            ui.add_sized([ui.available_width(), 16.0], egui::Label::new(
-                    RichText::new(line)
-                        .family(egui::FontFamily::Monospace)
-                        .size(12.5)
-                        .color(text_color)
-                ).wrap_mode(egui::TextWrapMode::Extend));
-            });
-        }
-                    });
+                                render_diff_text(ui, &diff_text);
+                            });
             });
     });
 }
@@ -904,29 +902,7 @@ impl RustTopApp {
                                                      .auto_shrink([false, false])
                                                      .show(ui, |ui| {
                                                          ui.style_mut().spacing.item_spacing = Vec2::ZERO;
-                                                         for line in diff_text.lines() {
-                                                             let (bg_color, text_color) = if line.starts_with('+') && !line.starts_with("+++") {
-                                                                 (Color32::from_rgba_premultiplied(40, 167, 69, 50), TEXT_MAIN)
-                                                             } else if line.starts_with('-') && !line.starts_with("---") {
-                                                                 (Color32::from_rgba_premultiplied(215, 58, 73, 50), TEXT_MAIN)
-                                                             } else if line.starts_with("@@") {
-                                                                 (SURFACE_BG_ALT, ACCENT)
-                                                             } else {
-                                                                 (Color32::TRANSPARENT, TEXT_MUTED)
-                                                             };
- 
-                                                             egui::Frame::default()
-                                                                 .fill(bg_color)
-                                                                 .inner_margin(egui::Margin::symmetric(8, 2))
-                                                                 .show(ui, |ui| {
-                                                                     ui.add_sized([ui.available_width(), 16.0], egui::Label::new(
-                                                                         RichText::new(line)
-                                                                             .family(egui::FontFamily::Monospace)
-                                                                             .size(12.5)
-                                                                             .color(text_color)
-                                                                     ).wrap_mode(egui::TextWrapMode::Extend));
-                                                                 });
-                                                         }
+                                                         render_diff_text(ui, diff_text);
                                                      });
                                              }
                                          } else {
@@ -954,14 +930,15 @@ impl RustTopApp {
         egui::Frame::default()
             .fill(SURFACE_BG)
             .stroke(Stroke::new(1.0, BORDER))
-            .inner_margin(egui::Margin::same(10))
+            .inner_margin(egui::Margin::symmetric(14, 10))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let path = self
                         .selected_change
                         .as_deref()
                         .unwrap_or("Select a file from the left panel");
-                    ui.label(RichText::new(path).color(TEXT_MUTED).size(13.0));
+                    
+                    ui.label(RichText::new(path).color(TEXT_MAIN).size(14.0).strong());
 
                     ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
                         icon_button(ui, icons::FOLDER_OPEN, "Open Repo")
@@ -1079,6 +1056,75 @@ impl RustTopApp {
 
 impl eframe::App for RustTopApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        while let Ok(event) = self.event_rx.try_recv() {
+            match event {
+                AppEvent::RepoLoaded(Ok(snapshot)) => {
+                    self.adopt_snapshot(snapshot);
+                    self.status_message = "Repository loaded.".to_string();
+                    self.error_message.clear();
+                }
+                AppEvent::RepoLoaded(Err(err)) => {
+                    self.error_message = format!("Failed to open repository: {err}");
+                }
+                AppEvent::RepoRefreshed(Ok(snapshot)) => {
+                    self.adopt_snapshot(snapshot);
+                    self.status_message = "Repository refreshed.".to_string();
+                    self.error_message.clear();
+                }
+                AppEvent::RepoRefreshed(Err(err)) => {
+                    self.error_message = format!("Refresh failed: {err}");
+                }
+                AppEvent::BranchSwitched(Ok(snapshot), branch) => {
+                    self.adopt_snapshot(snapshot);
+                    self.status_message = format!("Switched to branch '{branch}'.");
+                    self.error_message.clear();
+                }
+                AppEvent::BranchSwitched(Err(err), _) => {
+                    self.error_message = format!("Branch switch failed: {err}");
+                }
+                AppEvent::BranchMerged(Ok(snapshot), branch) => {
+                    self.adopt_snapshot(snapshot);
+                    self.status_message = format!("Merged '{branch}'.");
+                    self.error_message.clear();
+                }
+                AppEvent::BranchMerged(Err(err), _) => {
+                    self.error_message = format!("Merge failed: {err}");
+                }
+                AppEvent::CommitCreated(Ok(snapshot)) => {
+                    self.adopt_snapshot(snapshot);
+                    self.commit_summary.clear();
+                    self.commit_body.clear();
+                    self.ai_preview = None;
+                    self.status_message = "Commit created.".to_string();
+                    self.error_message.clear();
+                }
+                AppEvent::CommitCreated(Err(err)) => {
+                    self.error_message = format!("Commit failed: {err}");
+                }
+                AppEvent::AiCommitGenerated(Ok(suggestion)) => {
+                    self.commit_summary = suggestion.subject.clone();
+                    self.commit_body = suggestion.body.clone();
+                    self.ai_preview = Some(suggestion);
+                    self.status_message = "Generated commit suggestion.".to_string();
+                    self.error_message.clear();
+                }
+                AppEvent::AiCommitGenerated(Err(err)) => {
+                    self.error_message = format!("AI generation failed: {err}");
+                }
+                AppEvent::CommitDiffLoaded(oid, Ok(diffs)) => {
+                    if self.selected_commit.as_deref() == Some(oid.as_str()) {
+                        if let Some(first) = diffs.first() {
+                            self.selected_commit_file = Some(first.path.clone());
+                        }
+                        self.commit_diffs = Some(diffs);
+                    }
+                }
+                AppEvent::CommitDiffLoaded(_, Err(err)) => {
+                    self.error_message = format!("Failed to load commit details: {err}");
+                }
+            }
+        }
+
         self.render_menu_bar(ctx);
         self.render_top_bar(ctx);
         self.render_status_bar(ctx);
@@ -1318,11 +1364,92 @@ fn status_symbol(status: &str) -> &'static str {
     }
 }
 
-fn commit_body_mut(commit_message: &mut String) -> &mut String {
-    if let Some((_, body)) = commit_message.split_once("\n\n") {
-        let mut lines = commit_message.lines();
-        let summary = lines.next().unwrap_or_default().to_string();
-        *commit_message = format!("{summary}\n\n{body}");
+fn render_diff_text(ui: &mut egui::Ui, diff_text: &str) {
+    let mut old_line = 0;
+    let mut new_line = 0;
+    let mut in_hunk = false;
+
+    for line in diff_text.lines() {
+        let is_hunk_header = line.starts_with("@@ ");
+        if is_hunk_header {
+            if let Some(hunk_info) = line.split("@@").nth(1) {
+                let parts: Vec<&str> = hunk_info.trim().split(' ').collect();
+                if parts.len() >= 2 {
+                    old_line = parts[0].trim_start_matches('-').split(',').next().unwrap_or("0").parse().unwrap_or(0);
+                    new_line = parts[1].trim_start_matches('+').split(',').next().unwrap_or("0").parse().unwrap_or(0);
+                    in_hunk = true;
+                }
+            }
+        } else if line.starts_with("diff --git") || line.starts_with("index ") || line.starts_with("--- ") || line.starts_with("+++ ") {
+            in_hunk = false;
+        }
+
+        let (bg_color, text_color, _line_prefix) = if line.starts_with('+') && !line.starts_with("+++") {
+            (Color32::from_rgba_premultiplied(40, 167, 69, 50), TEXT_MAIN, "+")
+        } else if line.starts_with('-') && !line.starts_with("---") {
+            (Color32::from_rgba_premultiplied(215, 58, 73, 50), TEXT_MAIN, "-")
+        } else if is_hunk_header {
+            (SURFACE_BG_ALT, ACCENT, "@@")
+        } else {
+            (Color32::TRANSPARENT, TEXT_MUTED, " ")
+        };
+
+        let mut old_num = String::new();
+        let mut new_num = String::new();
+        
+        if in_hunk && !is_hunk_header {
+            if line.starts_with('+') {
+                new_num = new_line.to_string();
+                new_line += 1;
+            } else if line.starts_with('-') {
+                old_num = old_line.to_string();
+                old_line += 1;
+            } else if !line.starts_with('\\') {
+                old_num = old_line.to_string();
+                new_num = new_line.to_string();
+                old_line += 1;
+                new_line += 1;
+            }
+        }
+
+        egui::Frame::default()
+            .fill(bg_color)
+            .inner_margin(egui::Margin::symmetric(0, 2))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    
+                    // Line numbers
+                    let ln_rect = ui.allocate_exact_size(Vec2::new(70.0, 16.0), egui::Sense::hover()).0;
+                    ui.painter().rect_filled(ln_rect, 0.0, Color32::from_black_alpha(40));
+                    ui.painter().vline(ln_rect.right(), ln_rect.y_range(), Stroke::new(1.0, Color32::from_black_alpha(80)));
+                    
+                    ui.painter().text(
+                        ln_rect.left_center() + Vec2::new(30.0, 0.0),
+                        egui::Align2::RIGHT_CENTER,
+                        old_num,
+                        egui::FontId::monospace(11.0),
+                        Color32::from_gray(120),
+                    );
+                    ui.painter().text(
+                        ln_rect.right_center() - Vec2::new(6.0, 0.0),
+                        egui::Align2::RIGHT_CENTER,
+                        new_num,
+                        egui::FontId::monospace(11.0),
+                        Color32::from_gray(120),
+                    );
+                    
+                    ui.add_space(8.0);
+
+                    // Content
+                    ui.add_sized([ui.available_width(), 16.0], egui::Label::new(
+                        RichText::new(line)
+                            .family(egui::FontFamily::Monospace)
+                            .size(12.5)
+                            .color(text_color)
+                    ).wrap_mode(egui::TextWrapMode::Extend));
+                });
+            });
     }
-    commit_message
 }
+
