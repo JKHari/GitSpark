@@ -16,6 +16,8 @@ permissions:
 
 env:
   APP_NAME: gitspark
+  APP_DISPLAY_NAME: GitSpark
+  MACOS_BUNDLE_ID: com.github.samro.gitspark
 
 concurrency:
   group: release-${{ github.event_name }}-${{ github.ref_name || inputs.tag }}
@@ -59,11 +61,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             binary: gitspark
             archive_ext: tar.gz
-          - label: macos-x64
-            os: macos-15-intel
-            target: x86_64-apple-darwin
+          - label: macos-universal
+            os: macos-15
+            target: universal2-apple-darwin
             binary: gitspark
-            archive_ext: tar.gz
+            archive_ext: dmg
           - label: windows-x64
             os: windows-2022
             target: x86_64-pc-windows-msvc
@@ -95,13 +97,28 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ runner.os == 'macOS' && 'x86_64-apple-darwin,aarch64-apple-darwin' || matrix.target }}
 
       - name: Build release binary
+        if: runner.os != 'macOS'
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package Unix artifact
-        if: runner.os != 'Windows'
+      - name: Build universal macOS binary
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cargo build --release --locked --target x86_64-apple-darwin
+          cargo build --release --locked --target aarch64-apple-darwin
+
+          mkdir -p target/universal2-apple-darwin/release
+          lipo -create \
+            target/x86_64-apple-darwin/release/${{ matrix.binary }} \
+            target/aarch64-apple-darwin/release/${{ matrix.binary }} \
+            -output target/universal2-apple-darwin/release/${{ matrix.binary }}
+          lipo -info target/universal2-apple-darwin/release/${{ matrix.binary }}
+
+      - name: Package Linux artifact
+        if: runner.os == 'Linux'
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
@@ -118,6 +135,72 @@ jobs:
           fi
           tar -C dist -czf "dist/${archive_base}.${ARCHIVE_EXT}" "${archive_base}"
           rm -rf "$stage_root"
+
+      - name: Package macOS app bundle and DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.binary }}
+        run: |
+          version="${RELEASE_TAG#v}"
+          archive_base="${APP_NAME}-${RELEASE_TAG}-${TARGET}"
+          app_bundle_name="${APP_DISPLAY_NAME}.app"
+          bundle_root="dist/${archive_base}/${app_bundle_name}"
+          contents_dir="${bundle_root}/Contents"
+          macos_dir="${contents_dir}/MacOS"
+          resources_dir="${contents_dir}/Resources"
+          dmg_root="dist/dmg-root"
+
+          mkdir -p "$macos_dir" "$resources_dir" "$dmg_root"
+          cp "target/${TARGET}/release/${BIN_NAME}" "${macos_dir}/${BIN_NAME}"
+          chmod +x "${macos_dir}/${BIN_NAME}"
+
+          cat > "${contents_dir}/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "https://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleDisplayName</key>
+            <string>${APP_DISPLAY_NAME}</string>
+            <key>CFBundleExecutable</key>
+            <string>${BIN_NAME}</string>
+            <key>CFBundleIdentifier</key>
+            <string>${MACOS_BUNDLE_ID}</string>
+            <key>CFBundleInfoDictionaryVersion</key>
+            <string>6.0</string>
+            <key>CFBundleName</key>
+            <string>${APP_DISPLAY_NAME}</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${version}</string>
+            <key>CFBundleVersion</key>
+            <string>${version}</string>
+            <key>NSHighResolutionCapable</key>
+            <true/>
+          </dict>
+          </plist>
+          EOF
+
+          cp -R "$bundle_root" "$dmg_root/"
+          if [[ -f README.md ]]; then
+            cp README.md "$dmg_root/"
+          fi
+          ln -s /Applications "$dmg_root/Applications"
+
+          hdiutil create \
+            -volname "${APP_DISPLAY_NAME}" \
+            -srcfolder "$dmg_root" \
+            -ov \
+            -format UDZO \
+            "dist/${archive_base}.dmg"
+
+          file "dist/${archive_base}.dmg"
+          rm -rf "dist/${archive_base}" "$dmg_root"
 
       - name: Package Windows artifact
         if: runner.os == 'Windows'
