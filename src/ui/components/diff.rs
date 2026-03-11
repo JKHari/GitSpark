@@ -1,4 +1,6 @@
-use crate::ui::theme::{ACCENT, SURFACE_BG_ALT, TEXT_MAIN, TEXT_MUTED};
+use crate::ui::theme::{
+    ACCENT, DIFF_ADD_BG, DIFF_ADD_FG, DIFF_DEL_BG, DIFF_DEL_FG, DIFF_HUNK_BG, TEXT_MAIN, TEXT_MUTED,
+};
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 
 pub fn render_diff_text(ui: &mut egui::Ui, diff_text: &str) {
@@ -40,18 +42,18 @@ pub fn render_diff_text(ui: &mut egui::Ui, diff_text: &str) {
         let (bg_color, text_color, _line_prefix) =
             if line.starts_with('+') && !line.starts_with("+++") {
                 (
-                    Color32::from_rgba_premultiplied(40, 167, 69, 50),
-                    TEXT_MAIN,
+                    DIFF_ADD_BG,
+                    DIFF_ADD_FG,
                     "+",
                 )
             } else if line.starts_with('-') && !line.starts_with("---") {
                 (
-                    Color32::from_rgba_premultiplied(215, 58, 73, 50),
-                    TEXT_MAIN,
+                    DIFF_DEL_BG,
+                    DIFF_DEL_FG,
                     "-",
                 )
             } else if is_hunk_header {
-                (SURFACE_BG_ALT, ACCENT, "@@")
+                (DIFF_HUNK_BG, ACCENT, "@@")
             } else {
                 (Color32::TRANSPARENT, TEXT_MUTED, " ")
             };
@@ -111,16 +113,17 @@ pub fn render_diff_text(ui: &mut egui::Ui, diff_text: &str) {
                     ui.add_space(8.0);
 
                     // Content
-                    ui.add_sized(
-                        [ui.available_width(), 16.0],
-                        egui::Label::new(
-                            RichText::new(line)
-                                .family(egui::FontFamily::Monospace)
-                                .size(12.5)
-                                .color(text_color),
-                        )
-                        .wrap_mode(egui::TextWrapMode::Extend),
-                    );
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(line)
+                                    .family(egui::FontFamily::Monospace)
+                                    .size(12.5)
+                                    .color(text_color),
+                            )
+                            .wrap_mode(egui::TextWrapMode::Extend),
+                        );
+                    });
                 });
             });
     }
