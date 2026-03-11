@@ -564,7 +564,7 @@ impl RustTopApp {
                 ui.set_min_width(width.max(260.0));
                 egui::Frame::default()
                     .fill(PANEL_BG)
-                    .stroke(Stroke::new(1.0, BORDER))
+                    .stroke(Stroke::NONE)
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
