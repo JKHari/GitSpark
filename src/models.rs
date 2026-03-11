@@ -121,6 +121,12 @@ pub struct CommitSuggestion {
     pub raw: String,
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct RemoteModelOption {
+    pub id: String,
+    pub name: String,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct WindowSize {
     pub width: f32,

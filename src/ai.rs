@@ -1,7 +1,7 @@
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
-use crate::models::{AiSettings, CommitSuggestion};
+use crate::models::{AiSettings, CommitSuggestion, RemoteModelOption};
 
 #[derive(Default)]
 pub struct AiClient;
@@ -73,6 +73,57 @@ impl AiClient {
             .ok_or_else(|| anyhow!("AI response did not include a message choice"))?;
 
         parse_commit_suggestion(&content)
+    }
+
+    pub fn fetch_openrouter_models(&self) -> Result<Vec<RemoteModelOption>> {
+        let response = ureq::get("https://openrouter.ai/api/v1/models")
+            .header("Accept", "application/json")
+            .call()
+            .map_err(|error| anyhow!("OpenRouter models request failed: {error}"))?;
+
+        let body = response
+            .into_body()
+            .read_to_string()
+            .context("failed to read OpenRouter models response body")?;
+
+        let value: Value =
+            serde_json::from_str(&body).context("failed to parse OpenRouter models JSON")?;
+
+        let models = value
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("OpenRouter models response did not include a data array"))?;
+
+        let mut options = models
+            .iter()
+            .filter_map(|model| {
+                let id = model.get("id").and_then(Value::as_str)?.trim();
+                if id.is_empty() {
+                    return None;
+                }
+
+                let name = model
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or(id);
+
+                Some(RemoteModelOption {
+                    id: id.to_string(),
+                    name: name.to_string(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        options.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        options.dedup_by(|a, b| a.id == b.id);
+
+        if options.is_empty() {
+            bail!("OpenRouter models response did not include any usable models.");
+        }
+
+        Ok(options)
     }
 }
 

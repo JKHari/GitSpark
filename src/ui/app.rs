@@ -12,7 +12,10 @@ use rfd::FileDialog;
 
 use crate::ai::AiClient;
 use crate::git::GitClient;
-use crate::models::{AiProvider, AppSettings, CommitSuggestion, DiffEntry, GitIdentity, RepoSnapshot};
+use crate::models::{
+    AiProvider, AppSettings, CommitSuggestion, DiffEntry, GitIdentity, RemoteModelOption,
+    RepoSnapshot,
+};
 use crate::storage::{load_settings, push_recent_repo, save_settings};
 use crate::ui::components::buttons::tab_button;
 use crate::ui::components::diff::{render_diff_text, render_diff_text_readonly};
@@ -84,7 +87,16 @@ enum AppEvent {
     CommitCreated(Result<RepoSnapshot, String>),
     NetworkActionCompleted(Result<RepoSnapshot, String>, String),
     AiCommitGenerated(Result<CommitSuggestion, String>),
+    OpenRouterModelsLoaded(Result<Vec<RemoteModelOption>, String>),
     CommitDiffLoaded(String, Result<Vec<DiffEntry>, String>),
+}
+
+#[derive(Clone)]
+enum OpenRouterModelsState {
+    Idle,
+    Loading,
+    Ready(Vec<RemoteModelOption>),
+    Error(String),
 }
 
 pub struct GitSparkApp {
@@ -106,6 +118,7 @@ pub struct GitSparkApp {
     commit_summary: String,
     commit_body: String,
     ai_preview: Option<CommitSuggestion>,
+    openrouter_models: OpenRouterModelsState,
     status_message: String,
     error_message: String,
     active_network_action: Option<NetworkAction>,
@@ -153,6 +166,7 @@ impl GitSparkApp {
             commit_summary: String::new(),
             commit_body: String::new(),
             ai_preview: None,
+            openrouter_models: OpenRouterModelsState::Idle,
             status_message: "Open a repository to get started.".to_string(),
             error_message,
             active_network_action: None,
@@ -438,6 +452,27 @@ impl GitSparkApp {
                 .generate_commit_message(&settings, &diff)
                 .map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::AiCommitGenerated(res));
+            ctx.request_repaint();
+        });
+    }
+
+    fn ensure_openrouter_models(&mut self) {
+        if self.settings.ai.provider != AiProvider::OpenRouter {
+            return;
+        }
+
+        match self.openrouter_models {
+            OpenRouterModelsState::Idle | OpenRouterModelsState::Error(_) => {}
+            OpenRouterModelsState::Loading | OpenRouterModelsState::Ready(_) => return,
+        }
+
+        self.openrouter_models = OpenRouterModelsState::Loading;
+        let tx = self.event_tx.clone();
+        let ctx = self.ctx.clone();
+        let ai = AiClient::new();
+        thread::spawn(move || {
+            let res = ai.fetch_openrouter_models().map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::OpenRouterModelsLoaded(res));
             ctx.request_repaint();
         });
     }
@@ -2808,6 +2843,10 @@ impl GitSparkApp {
     }
 
     fn render_ai_settings_section(&mut self, ui: &mut egui::Ui) {
+        if self.settings.ai.provider == AiProvider::OpenRouter {
+            self.ensure_openrouter_models();
+        }
+
         self.render_settings_section_header(
             ui,
             "AI Commit",
@@ -2821,7 +2860,11 @@ impl GitSparkApp {
 
         ui.add_space(10.0);
         ui.label(RichText::new("Model").color(TEXT_MUTED).size(11.0));
-        dark_singleline(ui, &mut self.settings.ai.model, "gpt-4.1-mini");
+        if self.settings.ai.provider == AiProvider::OpenRouter {
+            self.render_openrouter_model_picker(ui);
+        } else {
+            dark_singleline(ui, &mut self.settings.ai.model, "gpt-4.1-mini");
+        }
 
         ui.add_space(8.0);
         ui.label(
@@ -2892,10 +2935,104 @@ impl GitSparkApp {
                         {
                             self.settings.ai.endpoint =
                                 self.settings.ai.provider.default_endpoint().to_string();
+                            if self.settings.ai.provider == AiProvider::OpenRouter {
+                                self.ensure_openrouter_models();
+                            }
                         }
                     }
                 });
         });
+    }
+
+    fn render_openrouter_model_picker(&mut self, ui: &mut egui::Ui) {
+        match self.openrouter_models.clone() {
+            OpenRouterModelsState::Idle | OpenRouterModelsState::Loading => {
+                egui::Frame::default()
+                    .fill(SURFACE_BG_MUTED)
+                    .stroke(Stroke::NONE)
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.horizontal(|ui| {
+                            ui.add(egui::Spinner::new().size(14.0));
+                            ui.label(RichText::new("Loading OpenRouter models...").color(TEXT_MUTED));
+                        });
+                    });
+            }
+            OpenRouterModelsState::Ready(models) => {
+                let selected_text = models
+                    .iter()
+                    .find(|model| model.id == self.settings.ai.model)
+                    .map(|model| format!("{} ({})", model.name, model.id))
+                    .unwrap_or_else(|| {
+                        if self.settings.ai.model.trim().is_empty() {
+                            "Select a model".to_string()
+                        } else {
+                            self.settings.ai.model.clone()
+                        }
+                    });
+
+                ui.scope(|ui| {
+                    let visuals = ui.visuals_mut();
+                    visuals.widgets.inactive.bg_fill = SURFACE_BG_MUTED;
+                    visuals.widgets.inactive.bg_stroke = Stroke::NONE;
+                    visuals.widgets.hovered.bg_fill = SURFACE_BG_MUTED;
+                    visuals.widgets.hovered.bg_stroke =
+                        Stroke::new(1.0, color_with_alpha(ACCENT_MUTED, 120.0));
+                    visuals.widgets.active.bg_fill = SURFACE_BG_MUTED;
+                    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT_MUTED);
+
+                    egui::ComboBox::from_id_salt("openrouter_model_picker")
+                        .selected_text(
+                            RichText::new(truncate_single_line(&selected_text, 48))
+                                .color(TEXT_MAIN)
+                                .size(12.0),
+                        )
+                        .width(ui.available_width())
+                        .show_ui(ui, |ui| {
+                            ui.style_mut().visuals.panel_fill = SURFACE_BG_MUTED;
+                            egui::ScrollArea::vertical()
+                                .max_height(260.0)
+                                .show(ui, |ui| {
+                                    for model in models {
+                                        let label = format!("{} ({})", model.name, model.id);
+                                        ui.selectable_value(
+                                            &mut self.settings.ai.model,
+                                            model.id.clone(),
+                                            truncate_single_line(&label, 72),
+                                        );
+                                    }
+                                });
+                        });
+                });
+            }
+            OpenRouterModelsState::Error(message) => {
+                egui::Frame::default()
+                    .fill(SURFACE_BG_MUTED)
+                    .stroke(Stroke::NONE)
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(RichText::new(message).color(TEXT_MUTED).size(11.0));
+                        ui.add_space(8.0);
+                        if ui
+                            .add(
+                                egui::Button::new(RichText::new("Retry").color(Color32::WHITE))
+                                    .fill(ACCENT_MUTED)
+                                    .stroke(Stroke::NONE)
+                                    .corner_radius(6.0)
+                                    .min_size(Vec2::new(78.0, 28.0)),
+                            )
+                            .clicked()
+                        {
+                            self.openrouter_models = OpenRouterModelsState::Idle;
+                            self.ensure_openrouter_models();
+                        }
+                    });
+            }
+        }
     }
 
     fn render_settings_section_header(
@@ -3081,6 +3218,19 @@ impl eframe::App for GitSparkApp {
                 }
                 AppEvent::AiCommitGenerated(Err(err)) => {
                     self.error_message = format!("AI generation failed: {err}");
+                }
+                AppEvent::OpenRouterModelsLoaded(Ok(models)) => {
+                    if self.settings.ai.provider == AiProvider::OpenRouter
+                        && self.settings.ai.model.trim().is_empty()
+                    {
+                        if let Some(first) = models.first() {
+                            self.settings.ai.model = first.id.clone();
+                        }
+                    }
+                    self.openrouter_models = OpenRouterModelsState::Ready(models);
+                }
+                AppEvent::OpenRouterModelsLoaded(Err(err)) => {
+                    self.openrouter_models = OpenRouterModelsState::Error(err);
                 }
                 AppEvent::CommitDiffLoaded(oid, Ok(diffs)) => {
                     if self.selected_commit.as_deref() == Some(oid.as_str()) {
