@@ -1,0 +1,97 @@
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RepoSummary {
+    pub path: PathBuf,
+    pub name: String,
+    pub current_branch: String,
+    pub head_oid: Option<String>,
+    pub ahead: usize,
+    pub behind: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ChangeEntry {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DiffEntry {
+    pub path: String,
+    pub diff: String,
+    pub is_binary: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct BranchInfo {
+    pub name: String,
+    pub is_current: bool,
+    pub is_remote: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct GitIdentity {
+    pub user_name: String,
+    pub user_email: String,
+    pub pull_rebase: Option<bool>,
+    pub default_branch: Option<String>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct RepoSnapshot {
+    pub repo: RepoSummary,
+    pub changes: Vec<ChangeEntry>,
+    pub diffs: Vec<DiffEntry>,
+    pub branches: Vec<BranchInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AiSettings {
+    pub provider: AiProvider,
+    pub endpoint: String,
+    pub model: String,
+    pub api_key: String,
+    pub system_prompt: String,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        Self {
+            provider: AiProvider::OpenAICompatible,
+            endpoint: "https://api.openai.com/v1/chat/completions".to_string(),
+            model: "gpt-4.1-mini".to_string(),
+            api_key: String::new(),
+            system_prompt: "Write a concise conventional commit style message for the provided git diff. Return JSON with fields subject and body.".to_string(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AiProvider {
+    OpenAICompatible,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct CommitSuggestion {
+    pub subject: String,
+    pub body: String,
+    pub raw: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub recent_repos: Vec<PathBuf>,
+    pub ai: AiSettings,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            recent_repos: Vec::new(),
+            ai: AiSettings::default(),
+        }
+    }
+}
