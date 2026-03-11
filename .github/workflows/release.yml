@@ -1,0 +1,186 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing git tag to build and release, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  APP_NAME: gitspark
+
+concurrency:
+  group: release-${{ github.event_name }}-${{ github.ref_name || inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      release_tag: ${{ steps.vars.outputs.release_tag }}
+    steps:
+      - name: Resolve release tag
+        id: vars
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+
+          if [[ -z "$tag" ]]; then
+            echo "Release tag is required." >&2
+            exit 1
+          fi
+
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.label }}
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            binary: gitspark
+            archive_ext: tar.gz
+          - label: macos-x64
+            os: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: gitspark
+            archive_ext: tar.gz
+          - label: windows-x64
+            os: windows-2022
+            target: x86_64-pc-windows-msvc
+            binary: gitspark.exe
+            archive_ext: zip
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.prepare.outputs.release_tag }}
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libclang-dev \
+            libxkbcommon-dev \
+            libxcb-render0-dev \
+            libxcb-shape0-dev \
+            libxcb-xfixes0-dev \
+            libwayland-dev \
+            libasound2-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            pkg-config
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release binary
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package Unix artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.binary }}
+          ARCHIVE_EXT: ${{ matrix.archive_ext }}
+        run: |
+          archive_base="${APP_NAME}-${RELEASE_TAG}-${TARGET}"
+          stage_root="dist/${archive_base}"
+          mkdir -p "$stage_root"
+          cp "target/${TARGET}/release/${BIN_NAME}" "$stage_root/"
+          if [[ -f README.md ]]; then
+            cp README.md "$stage_root/"
+          fi
+          tar -C dist -czf "dist/${archive_base}.${ARCHIVE_EXT}" "${archive_base}"
+          rm -rf "$stage_root"
+
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+          TARGET: ${{ matrix.target }}
+          BIN_NAME: ${{ matrix.binary }}
+        run: |
+          $archiveBase = "$env:APP_NAME-$env:RELEASE_TAG-$env:TARGET"
+          $stageRoot = Join-Path "dist" $archiveBase
+          New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+          Copy-Item "target\$env:TARGET\release\$env:BIN_NAME" $stageRoot
+          if (Test-Path README.md) {
+            Copy-Item README.md $stageRoot
+          }
+          $archivePath = Join-Path "dist" "$archiveBase.zip"
+          if (Test-Path $archivePath) {
+            Remove-Item $archivePath
+          }
+          Compress-Archive -Path $stageRoot -DestinationPath $archivePath
+          Remove-Item -Recurse -Force $stageRoot
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          path: dist/*.${{ matrix.archive_ext }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish release
+    needs:
+      - prepare
+      - build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v5
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum * > SHA256SUMS.txt
+
+      - name: Create or update GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* \
+              --verify-tag \
+              --generate-notes \
+              --title "$RELEASE_TAG"
+          fi
