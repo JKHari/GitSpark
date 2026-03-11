@@ -1187,6 +1187,7 @@ impl RustTopApp {
                                         .inner_margin(egui::Margin::same(0)),
                                 )
                                 .show_inside(ui, |ui| {
+                                    ui.spacing_mut().item_spacing.y = 0.0;
                                     self.render_filter_bar(ui);
                                     self.render_changes_header(ui);
 
@@ -1376,8 +1377,8 @@ impl RustTopApp {
 
         egui::Frame::default()
             .fill(SURFACE_BG)
-            .stroke(Stroke::new(1.0, BORDER))
-            .corner_radius(12.0)
+            .stroke(Stroke::NONE)
+            .corner_radius(0.0)
             .inner_margin(egui::Margin::same(0))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
@@ -1523,7 +1524,6 @@ impl RustTopApp {
                 );
             });
         }
-        ui.add_space(8.0);
     }
 
     fn render_changes_header(&mut self, ui: &mut egui::Ui) {
