@@ -1015,15 +1015,6 @@ impl RustTopApp {
                         .unwrap_or("Select a file from the left panel");
 
                     ui.label(RichText::new(path).color(TEXT_MAIN).size(14.0).strong());
-
-                    ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
-                        icon_button(ui, icons::FOLDER_OPEN, "Open Repo")
-                            .clicked()
-                            .then(|| self.open_repo_dialog());
-                        icon_button(ui, icons::GEAR, "Settings")
-                            .clicked()
-                            .then(|| self.show_settings = true);
-                    });
                 });
             });
     }
