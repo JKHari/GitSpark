@@ -7,8 +7,9 @@ use crate::models::RepoSnapshot;
 use crate::ui::domain_state::NetworkAction;
 use crate::ui::primitives::dropdown::{dropdown_trigger, toolbar_dropdown};
 use crate::ui::theme::{
-    BORDER, PANEL_BG, SURFACE_BG, SURFACE_BG_ALT, TEXT_MAIN, TEXT_MUTED, TOOLBAR_HEIGHT,
-    TOOLBAR_INNER_HEIGHT, TOOLBAR_PADDING, blend_color, color_with_alpha,
+    BORDER, PANEL_BG, SURFACE_BG, SURFACE_BG_ALT, TEXT_MAIN, TEXT_MUTED, TOOLBAR_BADGE_BG,
+    TOOLBAR_BUTTON_BORDER, TOOLBAR_HEIGHT, TOOLBAR_INNER_HEIGHT, TOOLBAR_PADDING, blend_color,
+    color_with_alpha,
 };
 
 pub enum ToolbarAction {
@@ -43,7 +44,7 @@ pub fn render_toolbar(
                 .stroke(Stroke::new(1.0, BORDER)),
         )
         .show(ctx, |ui| {
-            ui.spacing_mut().item_spacing.x = 8.0;
+            ui.spacing_mut().item_spacing.x = 0.0;
             ui.set_min_height(TOOLBAR_INNER_HEIGHT);
             ui.with_layout(egui::Layout::left_to_right(Align::Min), |ui| {
                 // Repository block
@@ -52,18 +53,18 @@ pub fn render_toolbar(
                     icons::FOLDER_NOTCH_OPEN,
                     "Current Repository",
                     props.repo_title,
-                    238.0,
+                    230.0,
                 );
-                
+
                 if repo_trigger.clicked() {
                     action = Some(ToolbarAction::ToggleRepoSelector);
                 }
 
-                let first_sep_x = ui.cursor().left() - 4.0;
+                let first_sep_x = ui.cursor().left();
                 ui.painter().vline(
                     first_sep_x,
                     ui.max_rect().y_range(),
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0, TOOLBAR_BUTTON_BORDER),
                 );
 
                 // Branch block
@@ -72,13 +73,13 @@ pub fn render_toolbar(
                     icons::GIT_BRANCH,
                     "Current Branch",
                     props.branch_title,
-                    214.0,
+                    230.0,
                 );
 
                 toolbar_dropdown(
                     ui,
                     "toolbar_branch",
-                    214.0,
+                    230.0,
                     &branch_trigger,
                     |ui| {
                         // Branch popup content
@@ -138,16 +139,16 @@ pub fn render_toolbar(
                     }
                 );
 
-                let second_sep_x = ui.cursor().left() - 4.0;
+                let second_sep_x = ui.cursor().left();
                 ui.painter().vline(
                     second_sep_x,
                     ui.max_rect().y_range(),
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0, TOOLBAR_BUTTON_BORDER),
                 );
 
                 // Network block
                 ui.allocate_ui_with_layout(
-                    Vec2::new(224.0, 52.0),
+                    Vec2::new(230.0, 50.0),
                     egui::Layout::top_down(Align::Min),
                     |ui| {
                         if let Some(a) = render_network_block(
@@ -234,16 +235,16 @@ fn render_network_block(
         .corner_radius(0.0)
         .inner_margin(egui::Margin::same(0))
         .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(224.0, 52.0));
-            ui.horizontal(|ui| {
+            ui.set_min_size(Vec2::new(230.0, 50.0));
+            ui.horizontal_centered(|ui| {
                 let main = ui
                     .allocate_ui_with_layout(
-                        Vec2::new(185.0, 52.0),
+                        Vec2::new(190.0, 50.0),
                         egui::Layout::left_to_right(Align::Center),
                         |ui| {
-                            ui.add_space(12.0);
+                            ui.add_space(10.0);
                             let (icon_rect, _) = ui.allocate_exact_size(
-                                Vec2::new(18.0, 52.0),
+                                Vec2::new(16.0, 50.0),
                                 egui::Sense::hover(),
                             );
                             let icon_offset = if is_action_active {
@@ -259,17 +260,17 @@ fn render_network_block(
                                 ),
                                 Align2::LEFT_CENTER,
                                 primary_action.icon(),
-                                egui::FontId::proportional(15.0 + action_anim * 0.5),
+                                egui::FontId::proportional(14.0 + action_anim * 0.5),
                                 blend_color(TEXT_MUTED, TEXT_MAIN, action_anim),
                             );
-                            ui.add_space(12.0);
+                            ui.add_space(10.0);
                             render_network_text_stack(
                                 ui,
                                 &description,
                                 &title,
                                 snapshot.repo.ahead,
                                 snapshot.repo.behind,
-                                143.0,
+                                154.0,
                                 action_anim,
                                 action_pulse,
                             );
@@ -284,31 +285,43 @@ fn render_network_block(
                 };
 
                 if main.hovered() && !is_action_active {
-            ui.painter().rect_filled(
-                main.rect,
-                0.0,
-                color_with_alpha(SURFACE_BG_ALT, 50.0),
-            );
-        }
+                    ui.painter().rect_filled(
+                        main.rect,
+                        0.0,
+                        color_with_alpha(SURFACE_BG_ALT, 50.0),
+                    );
+                }
 
-        let divider_x = ui.min_rect().left() + 185.0;
+                let divider_x = ui.min_rect().left() + 190.0;
                 ui.painter().vline(
                     divider_x,
                     ui.max_rect().y_range(),
-                    Stroke::new(1.0, BORDER),
+                    Stroke::new(1.0, TOOLBAR_BUTTON_BORDER),
                 );
-                let arrow_button = egui::Button::new(
-                    RichText::new(icons::CARET_DOWN)
-                        .size(12.0)
-                        .color(TEXT_MUTED),
-                )
-                .fill(Color32::TRANSPARENT)
-                .stroke(Stroke::NONE);
-                let arrow = ui.add_enabled(!any_action_active, arrow_button);
+
+                // Arrow button - allocate full remaining area and center the caret
+                let arrow_area = ui
+                    .allocate_ui_with_layout(
+                        Vec2::new(40.0, 50.0),
+                        egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                        |ui| {
+                            ui.label(
+                                RichText::new(icons::CARET_DOWN)
+                                    .size(10.0)
+                                    .color(if any_action_active {
+                                        color_with_alpha(TEXT_MUTED, 80.0)
+                                    } else {
+                                        TEXT_MUTED
+                                    }),
+                            );
+                        },
+                    )
+                    .response
+                    .interact(egui::Sense::click());
                 let arrow = if any_action_active {
-                    arrow
+                    arrow_area
                 } else {
-                    arrow.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    arrow_area.on_hover_cursor(egui::CursorIcon::PointingHand)
                 };
 
                 if arrow.hovered() && !is_action_active {
@@ -345,16 +358,23 @@ fn render_network_block(
             &block.response,
             PopupCloseBehavior::CloseOnClickOutside,
             |ui| {
-                ui.set_min_width(246.0);
-                if let Some(a) = render_network_menu(
-                    ui,
-                    snapshot,
-                    remote_name,
-                    primary_action,
-                    any_action_active,
-                ) {
-                    action = Some(a);
-                }
+                ui.set_min_width(240.0);
+                egui::Frame::default()
+                    .fill(PANEL_BG)
+                    .stroke(Stroke::new(1.0, BORDER))
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::same(10))
+                    .show(ui, |ui| {
+                        if let Some(a) = render_network_menu(
+                            ui,
+                            snapshot,
+                            remote_name,
+                            primary_action,
+                            any_action_active,
+                        ) {
+                            action = Some(a);
+                        }
+                    });
             },
         );
     });
@@ -369,7 +389,7 @@ fn render_disabled_network_block(ui: &mut egui::Ui) {
             icons::ARROW_CLOCKWISE,
             "Open a repository first",
             "Fetch origin",
-            224.0,
+            230.0,
         )
     });
 }
@@ -381,10 +401,17 @@ fn render_network_menu(
     primary_action: NetworkAction,
     any_action_active: bool,
 ) -> Option<ToolbarAction> {
+    use crate::ui::primitives::dropdown::dropdown_row;
+
     let mut action = None;
 
-    ui.label(RichText::new("Remote").small().color(TEXT_MUTED));
-    ui.add_space(6.0);
+    ui.label(
+        RichText::new("Remote")
+            .size(10.0)
+            .color(TEXT_MUTED)
+            .strong(),
+    );
+    ui.add_space(4.0);
 
     let primary_label = if any_action_active {
         format!("{}...", primary_action.pending_title(remote_name))
@@ -392,59 +419,45 @@ fn render_network_menu(
         primary_action.title(remote_name)
     };
 
-    if ui
-        .add_enabled(!any_action_active, egui::Button::new(primary_label))
-        .clicked()
-    {
-        action = Some(ToolbarAction::RunNetworkAction(primary_action));
-        ui.close_menu();
-    }
+    ui.add_enabled_ui(!any_action_active, |ui| {
+        if dropdown_row(ui, &primary_label, true).clicked() {
+            action = Some(ToolbarAction::RunNetworkAction(primary_action));
+            ui.close_menu();
+        }
 
-    if primary_action != NetworkAction::Fetch
-        && ui
-            .add_enabled(
-                !any_action_active,
-                egui::Button::new(format!("Fetch {remote_name}")),
-            )
-            .clicked()
-    {
-        action = Some(ToolbarAction::FetchOrigin);
-        ui.close_menu();
-    }
+        if primary_action != NetworkAction::Fetch
+            && dropdown_row(ui, &format!("Fetch {remote_name}"), false).clicked()
+        {
+            action = Some(ToolbarAction::FetchOrigin);
+            ui.close_menu();
+        }
 
-    if snapshot.repo.behind > 0
-        && primary_action != NetworkAction::Pull
-        && ui
-            .add_enabled(
-                !any_action_active,
-                egui::Button::new(format!("Pull {remote_name}")),
-            )
-            .clicked()
-    {
-        action = Some(ToolbarAction::PullOrigin);
-        ui.close_menu();
-    }
+        if snapshot.repo.behind > 0
+            && primary_action != NetworkAction::Pull
+            && dropdown_row(ui, &format!("Pull {remote_name}"), false).clicked()
+        {
+            action = Some(ToolbarAction::PullOrigin);
+            ui.close_menu();
+        }
 
-    if snapshot.repo.ahead > 0
-        && primary_action != NetworkAction::Push
-        && ui
-            .add_enabled(
-                !any_action_active,
-                egui::Button::new(format!("Push {remote_name}")),
-            )
-            .clicked()
-    {
-        action = Some(ToolbarAction::PushOrigin);
-        ui.close_menu();
-    }
+        if snapshot.repo.ahead > 0
+            && primary_action != NetworkAction::Push
+            && dropdown_row(ui, &format!("Push {remote_name}"), false).clicked()
+        {
+            action = Some(ToolbarAction::PushOrigin);
+            ui.close_menu();
+        }
+    });
 
+    ui.add_space(4.0);
     ui.separator();
+    ui.add_space(4.0);
     ui.label(
         RichText::new(format!(
             "{}  {}↑ {}↓",
             remote_name, snapshot.repo.ahead, snapshot.repo.behind
         ))
-        .small()
+        .size(10.0)
         .color(TEXT_MUTED),
     );
 
@@ -463,7 +476,7 @@ fn render_network_text_stack(
     active_t: f32,
     pulse: f32,
 ) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 52.0), egui::Sense::hover());
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 50.0), egui::Sense::hover());
     let painter = ui.painter();
     let text_left = rect.left();
     let text_top = rect.top() + 10.0;
@@ -471,7 +484,7 @@ fn render_network_text_stack(
     let title_color = blend_color(TEXT_MAIN, Color32::WHITE, active_t * 0.35);
 
     // 1. Title (Top)
-    let font_id_title = egui::FontId::proportional(13.0);
+    let font_id_title = egui::FontId::proportional(12.0);
     let galley_title = painter.layout(
         truncate_single_line(title, 20),
         font_id_title,
@@ -485,7 +498,7 @@ fn render_network_text_stack(
     // 2. Badges (Next to Title)
     if ahead > 0 || behind > 0 {
         let badge_left = title_rect.right() + 8.0;
-        let badge_bg = color_with_alpha(SURFACE_BG_ALT, 255.0);
+        let badge_bg = TOOLBAR_BADGE_BG;
         let badge_fg = TEXT_MUTED;
 
         let mut badge_text = String::new();
@@ -504,7 +517,7 @@ fn render_network_text_stack(
             f32::INFINITY,
         );
 
-        let badge_height = 16.0;
+        let badge_height = 13.0;
         let badge_width = galley_badge.size().x + 12.0;
         let badge_rect = egui::Rect::from_min_size(
             egui::pos2(badge_left, text_top),
@@ -522,11 +535,11 @@ fn render_network_text_stack(
     }
 
     // 3. Description (Bottom)
-    let font_id_desc = egui::FontId::proportional(10.0);
+    let font_id_desc = egui::FontId::proportional(11.0);
     painter.text(
-        egui::pos2(text_left, text_top + 17.0),
+        egui::pos2(text_left, text_top + 16.0),
         Align2::LEFT_TOP,
-        truncate_single_line(description, 28),
+        truncate_single_line(description, 25),
         font_id_desc,
         description_color,
     );
@@ -534,7 +547,7 @@ fn render_network_text_stack(
     if active_t > 0.0 {
         let progress_width = 28.0 + pulse * 28.0;
         let progress_rect = egui::Rect::from_min_size(
-            egui::pos2(text_left, rect.bottom() - 10.0),
+            egui::pos2(text_left, rect.bottom() - 6.0),
             Vec2::new(progress_width, 2.0),
         );
         painter.rect_filled(

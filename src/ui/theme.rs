@@ -23,11 +23,15 @@ pub const DIFF_DEL_BG: Color32 = Color32::from_rgb(61, 31, 26);
 pub const DIFF_DEL_FG: Color32 = Color32::from_rgb(218, 54, 51);
 pub const DIFF_HUNK_BG: Color32 = Color32::from_rgb(1, 4, 9);
 
+// --- Toolbar colors ---
+pub const TOOLBAR_BUTTON_BORDER: Color32 = Color32::from_rgb(20, 20, 20); // #141414
+pub const TOOLBAR_BADGE_BG: Color32 = Color32::from_rgb(72, 79, 88); // #484f58 ($gray-700)
+
 // --- Geometry tokens ---
-pub const TOOLBAR_HEIGHT: f32 = 68.0;
-pub const TOOLBAR_INNER_HEIGHT: f32 = 52.0;
-pub const TOOLBAR_PADDING: egui::Vec2 = egui::Vec2::new(12.0, 5.0);
-pub const TOOLBAR_ITEM_SPACING: f32 = 8.0;
+pub const TOOLBAR_HEIGHT: f32 = 50.0;
+pub const TOOLBAR_INNER_HEIGHT: f32 = 50.0;
+pub const TOOLBAR_PADDING: egui::Vec2 = egui::Vec2::new(0.0, 0.0);
+pub const TOOLBAR_ITEM_SPACING: f32 = 0.0;
 pub const STATUS_BAR_HEIGHT: f32 = 26.0;
 pub const SIDEBAR_DEFAULT_WIDTH: f32 = 260.0;
 pub const SIDEBAR_MIN_WIDTH: f32 = 220.0;

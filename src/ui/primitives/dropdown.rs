@@ -117,19 +117,19 @@ pub fn dropdown_trigger(
         .corner_radius(0.0)
         .inner_margin(egui::Margin::same(0))
         .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(width, 52.0));
+            ui.set_min_size(Vec2::new(width, 50.0));
             ui.horizontal(|ui| {
-                ui.add_space(12.0);
+                ui.add_space(10.0);
                 ui.add_sized(
-                    [18.0, 52.0],
-                    egui::Label::new(RichText::new(icon).size(15.0).color(TEXT_MUTED)),
+                    [16.0, 50.0],
+                    egui::Label::new(RichText::new(icon).size(14.0).color(TEXT_MUTED)),
                 );
-                ui.add_space(12.0);
-                
+                ui.add_space(10.0);
+
                 // Text stack
-                let text_width = width - 76.0;
+                let text_width = width - 68.0;
                 ui.allocate_ui_with_layout(
-                     Vec2::new(text_width, 52.0),
+                     Vec2::new(text_width, 50.0),
                      egui::Layout::left_to_right(Align::Center),
                      |ui| {
                          ui.vertical(|ui| {
@@ -137,25 +137,25 @@ pub fn dropdown_trigger(
                              ui.label(
                                  RichText::new(description)
                                      .color(TEXT_MUTED)
-                                     .size(10.0),
+                                     .size(11.0),
                              );
                              ui.label(
                                  RichText::new(title)
                                      .color(TEXT_MAIN)
-                                     .size(13.0)
+                                     .size(12.0)
                                      .strong(),
                              );
                          });
                      },
                 );
-                
-                ui.label(RichText::new(icons::CARET_DOWN).color(TEXT_MUTED).size(12.0));
+
+                ui.label(RichText::new(icons::CARET_DOWN).color(TEXT_MUTED).size(10.0));
             });
         })
         .response
         .interact(egui::Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
-        
+
     if response.hovered() {
         ui.painter().rect_filled(
             response.rect,
@@ -163,7 +163,7 @@ pub fn dropdown_trigger(
             color_with_alpha(SURFACE_BG_ALT, 50.0),
         );
     }
-    
+
     response
 }
 
