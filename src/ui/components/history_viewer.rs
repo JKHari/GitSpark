@@ -36,21 +36,22 @@ pub fn render_history_viewer(
                 .resizable(false)
                 .frame(egui::Frame::default().fill(SURFACE_BG).inner_margin(12.0))
                 .show_inside(ui, |ui| {
-                    ui.add_sized(
-                        [ui.available_width(), 24.0],
-                        egui::Label::new(
-                            RichText::new(&commit.summary)
-                                .color(TEXT_MAIN)
-                                .size(18.0)
-                                .strong(),
-                        )
-                        .truncate(),
-                    );
+                    ui.with_layout(egui::Layout::left_to_right(Align::Min).with_main_wrap(true), |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(&commit.summary)
+                                    .color(TEXT_MAIN)
+                                    .size(18.0)
+                                    .strong(),
+                            )
+                            .truncate(),
+                        );
+                    });
 
                     if !commit.body.is_empty() {
                         ui.add_space(4.0);
-                        ui.add_sized(
-                            [ui.available_width(), 18.0],
+                        ui.add(
                             egui::Label::new(
                                 RichText::new(&commit.body).color(TEXT_MUTED),
                             )
@@ -60,8 +61,7 @@ pub fn render_history_viewer(
 
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        ui.add_sized(
-                            [ui.available_width() - 90.0, 16.0],
+                        ui.add(
                             egui::Label::new(
                                 RichText::new(format!(
                                     "{} committed {}",
@@ -71,11 +71,13 @@ pub fn render_history_viewer(
                             )
                             .truncate(),
                         );
-                        ui.label(
-                            RichText::new(&commit.short_oid)
-                                .monospace()
-                                .color(TEXT_MUTED),
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(
+                                RichText::new(&commit.short_oid)
+                                    .monospace()
+                                    .color(TEXT_MUTED),
+                            );
+                        });
                     });
                 });
 
