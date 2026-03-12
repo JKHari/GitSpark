@@ -18,9 +18,6 @@ pub enum ToolbarAction {
     FetchOrigin,
     PullOrigin,
     PushOrigin,
-    OpenRepoDialog,
-    RefreshRepo,
-    OpenRepo(std::path::PathBuf),
 }
 
 pub struct ToolbarProps<'a> {
@@ -28,7 +25,6 @@ pub struct ToolbarProps<'a> {
     pub branch_title: &'a str,
     pub snapshot: Option<&'a RepoSnapshot>,
     pub active_network_action: Option<NetworkAction>,
-    pub recent_repos: &'a [std::path::PathBuf],
 }
 
 pub fn render_toolbar(

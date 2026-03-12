@@ -542,9 +542,6 @@ impl GitSparkApp {
             ToolbarAction::FetchOrigin => self.fetch_origin(),
             ToolbarAction::PullOrigin => self.pull_origin(),
             ToolbarAction::PushOrigin => self.push_origin(),
-            ToolbarAction::OpenRepoDialog => self.open_repo_dialog(),
-            ToolbarAction::RefreshRepo => self.refresh_repo(),
-            ToolbarAction::OpenRepo(path) => self.open_repo(path),
         }
     }
 
@@ -937,7 +934,6 @@ impl eframe::App for GitSparkApp {
                     .unwrap_or("No branch"),
                 snapshot,
                 active_network_action: self.network.active_action,
-                recent_repos: &self.settings.recent_repos,
             };
             if let Some(action) = toolbar::render_toolbar(ctx, &toolbar_props) {
                 self.handle_toolbar_action(action);
