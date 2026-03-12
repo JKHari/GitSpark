@@ -1,5 +1,6 @@
 use eframe::egui::{self, Color32, Stroke, TextStyle};
 
+// --- Colors ---
 pub const BG: Color32 = Color32::from_rgb(13, 17, 23); // #0d1117 Main window
 pub const PANEL_BG: Color32 = Color32::from_rgb(22, 27, 34); // #161b22 Sidebar/surface alt
 pub const SURFACE_BG: Color32 = Color32::from_rgb(33, 38, 45); // #21262d Elevated surface
@@ -21,6 +22,65 @@ pub const DIFF_ADD_FG: Color32 = Color32::from_rgb(3, 201, 105);
 pub const DIFF_DEL_BG: Color32 = Color32::from_rgb(61, 31, 26);
 pub const DIFF_DEL_FG: Color32 = Color32::from_rgb(218, 54, 51);
 pub const DIFF_HUNK_BG: Color32 = Color32::from_rgb(1, 4, 9);
+
+// --- Geometry tokens ---
+pub const TOOLBAR_HEIGHT: f32 = 68.0;
+pub const STATUS_BAR_HEIGHT: f32 = 26.0;
+pub const SIDEBAR_DEFAULT_WIDTH: f32 = 260.0;
+pub const SIDEBAR_MIN_WIDTH: f32 = 220.0;
+pub const ROW_HEIGHT: f32 = 32.0;
+pub const ROW_HEIGHT_COMPACT: f32 = 28.0;
+pub const CONTROL_HEIGHT: f32 = 34.0;
+pub const TAB_HEIGHT: f32 = 34.0;
+pub const CORNER_RADIUS: f32 = 6.0;
+pub const CORNER_RADIUS_SM: f32 = 4.0;
+pub const SECTION_PADDING: f32 = 12.0;
+pub const ITEM_GAP: f32 = 8.0;
+pub const DIFF_ROW_HEIGHT: f32 = 20.0;
+
+// --- Utility functions ---
+
+pub fn color_with_alpha(color: Color32, alpha: f32) -> Color32 {
+    Color32::from_rgba_premultiplied(
+        color.r(),
+        color.g(),
+        color.b(),
+        alpha.clamp(0.0, 255.0) as u8,
+    )
+}
+
+pub fn blend_color(from: Color32, to: Color32, t: f32) -> Color32 {
+    let t = t.clamp(0.0, 1.0);
+    let mix = |a: u8, b: u8| -> u8 { (a as f32 + (b as f32 - a as f32) * t).round() as u8 };
+    Color32::from_rgba_premultiplied(
+        mix(from.r(), to.r()),
+        mix(from.g(), to.g()),
+        mix(from.b(), to.b()),
+        mix(from.a(), to.a()),
+    )
+}
+
+// --- Frame presets ---
+
+pub fn panel_frame() -> egui::Frame {
+    egui::Frame::default()
+        .fill(PANEL_BG)
+        .inner_margin(egui::Margin::same(0))
+}
+
+pub fn surface_frame() -> egui::Frame {
+    egui::Frame::default()
+        .fill(SURFACE_BG)
+        .stroke(Stroke::new(1.0, BORDER))
+}
+
+pub fn card_frame() -> egui::Frame {
+    egui::Frame::default()
+        .fill(SURFACE_BG_MUTED)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CORNER_RADIUS)
+        .inner_margin(egui::Margin::same(SECTION_PADDING as i8))
+}
 
 pub fn configure_visuals(ctx: &egui::Context) {
     let mut visuals = egui::Visuals::dark();
@@ -48,8 +108,8 @@ pub fn configure_visuals(ctx: &egui::Context) {
     style.spacing.item_spacing = egui::Vec2::new(8.0, 6.0);
     style.spacing.button_padding = egui::Vec2::new(10.0, 6.0);
     style.spacing.indent = 14.0;
-    style.visuals.window_corner_radius = 6.0.into();
-    style.visuals.menu_corner_radius = 6.0.into();
+    style.visuals.window_corner_radius = CORNER_RADIUS.into();
+    style.visuals.menu_corner_radius = CORNER_RADIUS.into();
 
     let proportional = egui::FontFamily::Proportional;
     let monospace = egui::FontFamily::Monospace;

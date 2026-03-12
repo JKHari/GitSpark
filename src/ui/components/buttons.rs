@@ -1,9 +1,9 @@
-use crate::ui::app::SidebarTab;
+use crate::ui::ui_state::SidebarTab;
 use crate::ui::theme::{
     ACCENT, BORDER, SURFACE_BG, SURFACE_BG_MUTED, TEXT_MAIN, TEXT_MUTED,
 };
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
-use egui_phosphor::regular as icons;
+
 
 pub fn icon_button(ui: &mut egui::Ui, icon: &str, tooltip: &str) -> egui::Response {
     ui.add(
