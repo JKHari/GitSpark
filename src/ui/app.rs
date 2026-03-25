@@ -1086,7 +1086,12 @@ impl Render for GitSparkApp {
                         resizable_panel()
                             .size(px(260.0))
                             .size_range(px(200.0)..px(400.0))
-                            .child(self.render_sidebar(summary_focused, description_focused, cx)),
+                            .child(if self.nav.show_repo_selector {
+                                self.render_repo_selector_panel(cx).into_any_element()
+                            } else {
+                                self.render_sidebar(summary_focused, description_focused, cx)
+                                    .into_any_element()
+                            }),
                     )
                     .child(
                         resizable_panel()
@@ -1094,10 +1099,6 @@ impl Render for GitSparkApp {
                     ),
             )
             .child(self.render_status_bar());
-
-        if self.nav.show_repo_selector {
-            root = root.child(self.render_repo_selector_overlay(cx));
-        }
 
         if self.nav.show_settings {
             root = root.child(self.render_settings_overlay(cx));
@@ -1816,111 +1817,261 @@ impl GitSparkApp {
     // Repo selector overlay
     // ------------------------------------------------------------------
 
-    fn render_repo_selector_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_repo_selector_panel(&self, cx: &mut Context<Self>) -> Div {
         let recent_repos = self.settings.recent_repos.clone();
+        let current_repo = self
+            .repo
+            .snapshot
+            .as_ref()
+            .map(|s| s.repo.name.clone())
+            .unwrap_or_default();
 
-        // Backdrop — click dismisses
-        let backdrop = div()
-            .id("repo-selector-backdrop")
-            .absolute()
-            .top(px(theme::TOOLBAR_HEIGHT))
-            .left_0()
-            .size_full()
+        // --- Header: current repo + caret up ---
+        let header = h_flex()
+            .id("repo-selector-header")
+            .w_full()
+            .h(px(theme::TOOLBAR_HEIGHT))
+            .flex_shrink_0()
+            .bg(theme::toolbar_bg())
+            .border_b_1()
+            .border_color(theme::toolbar_button_border())
+            .px(px(10.0))
+            .gap(px(10.0))
+            .items_center()
+            .cursor_pointer()
             .on_click(cx.listener(|app, _evt, _win, cx| {
                 app.nav.show_repo_selector = false;
                 cx.notify();
-            }));
+            }))
+            // Repo icon
+            .child(
+                div().flex_shrink_0().child(
+                    gpui_component::Icon::new(gpui_component::IconName::FolderOpen)
+                        .size(px(16.0))
+                        .text_color(theme::text_main()),
+                ),
+            )
+            // Text stack
+            .child(
+                v_flex()
+                    .flex_1()
+                    .gap(px(2.0))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE_SM))
+                            .text_color(theme::text_muted())
+                            .child("Current Repository"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_main())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .child(current_repo),
+                    ),
+            )
+            // Caret up
+            .child(
+                div().flex_shrink_0().child(
+                    gpui_component::Icon::new(gpui_component::IconName::ChevronUp)
+                        .size(px(10.0))
+                        .text_color(theme::text_muted()),
+                ),
+            );
 
-        // Dropdown panel
-        let mut dropdown = v_flex()
-            .id("repo-selector-dropdown")
-            .absolute()
-            .top(px(theme::TOOLBAR_HEIGHT))
-            .left_0()
-            .w(px(280.0))
-            .max_h(px(400.0))
-            .overflow_y_scroll()
-            .bg(theme::panel_bg())
-            .border_1()
-            .border_color(theme::border())
-            .rounded_b(px(theme::CORNER_RADIUS));
-
-        for repo_path in &recent_repos {
-            let display_name = repo_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| repo_path.to_string_lossy().to_string());
-            let full_path = repo_path.to_string_lossy().to_string();
-            let path_clone = repo_path.clone();
-
-            dropdown = dropdown.child(
+        // --- Filter bar ---
+        let filter_bar = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .px(px(10.0))
+            .py(px(10.0))
+            .gap(px(8.0))
+            .items_center()
+            // Filter input placeholder
+            .child(
+                h_flex()
+                    .flex_1()
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .items_center()
+                    .gap(px(6.0))
+                    .rounded(px(theme::CORNER_RADIUS))
+                    .border_1()
+                    .border_color(theme::accent())
+                    .bg(theme::bg())
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .text_color(theme::text_muted())
+                            .child("\u{1F50D}"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_muted())
+                            .child("Filter"),
+                    ),
+            )
+            // Add button
+            .child(
                 div()
-                    .id(SharedString::from(format!("repo-{full_path}")))
-                    .w_full()
+                    .id("repo-add-btn")
+                    .flex_shrink_0()
+                    .h(px(28.0))
                     .px(px(12.0))
-                    .py(px(8.0))
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(theme::CORNER_RADIUS))
+                    .bg(theme::surface_bg())
+                    .border_1()
+                    .border_color(theme::surface_bg_alt())
                     .cursor_pointer()
-                    .hover(|s| s.bg(theme::hover_bg()))
-                    .border_b_1()
-                    .border_color(theme::border())
-                    .on_click(cx.listener(move |app, _evt, _win, cx| {
-                        app.open_repo_with_notify(path_clone.clone(), cx);
+                    .hover(|s| s.bg(theme::toolbar_hover_bg()))
+                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                        app.open_repo_dialog(cx);
                     }))
                     .child(
-                        v_flex()
-                            .gap(px(2.0))
+                        h_flex()
+                            .items_center()
+                            .gap(px(4.0))
                             .child(
                                 div()
-                                    .text_size(px(12.0))
+                                    .text_size(px(theme::FONT_SIZE))
                                     .text_color(theme::text_main())
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(display_name),
+                                    .child("Add"),
                             )
                             .child(
                                 div()
-                                    .text_size(px(10.0))
+                                    .text_size(px(8.0))
                                     .text_color(theme::text_muted())
-                                    .child(full_path.clone()),
+                                    .child("\u{25BC}"),
                             ),
                     ),
             );
-        }
 
-        // "Open Folder..." row
-        dropdown = dropdown.child(
-            div()
-                .w_full()
-                .px(px(8.0))
-                .py(px(4.0))
-                .child(
-                    h_flex()
-                        .id("repo-open-folder")
-                        .items_center()
-                        .gap(px(6.0))
-                        .px(px(8.0))
-                        .py(px(4.0))
-                        .rounded(px(4.0))
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme::surface_bg_alt()))
-                        .child(
-                            div()
-                                .text_size(px(14.0))
-                                .text_color(theme::text_muted())
-                                .child("\u{1F4C2}"),
-                        )
-                        .child(
-                            div()
-                                .text_size(px(theme::FONT_SIZE))
-                                .text_color(theme::text_main())
-                                .child("Open Folder\u{2026}"),
-                        )
-                        .on_click(cx.listener(|app, _evt, _win, cx| {
-                            app.open_repo_dialog(cx);
-                        })),
-                ),
-        );
+        // --- Repo list ---
+        let repos_snapshot = recent_repos.clone();
+        let repo_list = if repos_snapshot.is_empty() {
+            div().flex_1().child(
+                div()
+                    .w_full()
+                    .py(px(20.0))
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::text_muted())
+                            .child("No recent repositories"),
+                    ),
+            )
+        } else {
+            let count = repos_snapshot.len();
+            div().flex_1().child(
+                uniform_list("repo-list", count, {
+                    let repos = repos_snapshot.clone();
+                    let current = self
+                        .repo
+                        .snapshot
+                        .as_ref()
+                        .map(|s| s.repo.path.clone())
+                        .unwrap_or_default();
+                    let view = cx.entity().clone();
+                    move |range, _win, _cx| {
+                        range
+                            .map(|ix| {
+                                let repo_path = &repos[ix];
+                                let display_name = repo_path
+                                    .file_name()
+                                    .map(|n| n.to_string_lossy().to_string())
+                                    .unwrap_or_else(|| {
+                                        repo_path.to_string_lossy().to_string()
+                                    });
+                                let is_current =
+                                    repo_path.to_string_lossy() == current.to_string_lossy();
+                                let path_clone = repo_path.clone();
+                                let vh = view.clone();
 
-        div().size_full().absolute().top_0().left_0().child(backdrop).child(dropdown)
+                                h_flex()
+                                    .id(SharedString::from(format!(
+                                        "repo-{}",
+                                        repo_path.to_string_lossy()
+                                    )))
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(10.0))
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::hover_bg()))
+                                    .bg(if is_current {
+                                        theme::hover_bg()
+                                    } else {
+                                        gpui::transparent_black()
+                                    })
+                                    // Repo icon (lock = private-like)
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .text_size(px(16.0))
+                                            .text_color(theme::text_muted())
+                                            .child("\u{1F512}"),
+                                    )
+                                    // Repo name
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .overflow_x_hidden()
+                                            .child(
+                                                div()
+                                                    .text_size(px(theme::FONT_SIZE))
+                                                    .text_color(theme::text_main())
+                                                    .whitespace_nowrap()
+                                                    .child(display_name),
+                                            ),
+                                    )
+                                    .on_click(move |_evt, _win, cx| {
+                                        let p = path_clone.clone();
+                                        vh.update(cx, |app, cx| {
+                                            app.open_repo_with_notify(p, cx);
+                                        });
+                                    })
+                                    .into_any_element()
+                            })
+                            .collect()
+                    }
+                })
+                .flex_1()
+                .with_sizing_behavior(ListSizingBehavior::Infer),
+            )
+        };
+
+        // --- Section header: "Recent" ---
+        let section_header = div()
+            .w_full()
+            .px(px(10.0))
+            .py(px(8.0))
+            .child(
+                div()
+                    .text_size(px(theme::FONT_SIZE))
+                    .text_color(theme::text_main())
+                    .font_weight(FontWeight::BOLD)
+                    .child("Recent"),
+            );
+
+        // --- Fill the sidebar panel ---
+        v_flex()
+            .size_full()
+            .bg(theme::panel_bg())
+            .border_r_1()
+            .border_color(theme::border())
+            .child(header)
+            .child(filter_bar)
+            .child(section_header)
+            .child(repo_list)
     }
 
     // ------------------------------------------------------------------
