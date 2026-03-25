@@ -9,6 +9,13 @@ use crate::ui::theme;
 use crate::ui::ui_state::SidebarTab;
 
 // ---------------------------------------------------------------------------
+// Row heights (fixed, for uniform_list)
+// ---------------------------------------------------------------------------
+
+const CHANGE_ROW_HEIGHT: f32 = 29.0;
+const HISTORY_ROW_HEIGHT: f32 = 40.0; // summary + meta + padding
+
+// ---------------------------------------------------------------------------
 // Color helpers
 // ---------------------------------------------------------------------------
 
@@ -70,68 +77,87 @@ pub fn render_sidebar_interactive(
     // Tab bar with click handlers
     let tab_bar = render_interactive_tab_bar(sidebar_tab, change_count, cx);
 
-    // Content list with click handlers.
-    // The inner wrapper is a plain column that sizes to its children.
-    // The outer scroll container takes the remaining sidebar height.
-    let mut inner = div().flex().flex_col().w_full();
-
-    match sidebar_tab {
+    // Content — virtualized with uniform_list
+    let content: Div = match sidebar_tab {
         SidebarTab::Changes => {
             if changes.is_empty() {
-                inner = inner.child(render_empty_state("No changed files"));
+                div().flex_1().child(render_empty_state("No changed files"))
             } else {
-                for change in changes {
-                    let is_selected =
-                        selected_change.as_deref() == Some(change.path.as_str());
-                    let path = change.path.clone();
-                    let vh = view.clone();
-                    inner = inner.child(
-                        render_change_row(change, is_selected)
-                            .id(SharedString::from(format!("change-{}", change.path)))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::hover_bg()))
-                            .on_click(move |_evt, _win, cx| {
-                                let path = path.clone();
-                                vh.update(cx, |app, cx| {
-                                    app.selection.selected_change = Some(path);
-                                    cx.notify();
-                                });
-                            }),
-                    );
-                }
+                let changes_snapshot: Vec<ChangeEntry> = changes.to_vec();
+                let sel = selected_change.clone();
+                div().flex_1().child(
+                    uniform_list("changes-list", changes_snapshot.len(), {
+                        let view = view.clone();
+                        move |range, _win, _cx| {
+                            range
+                                .map(|ix| {
+                                    let change = &changes_snapshot[ix];
+                                    let is_selected =
+                                        sel.as_deref() == Some(change.path.as_str());
+                                    let path = change.path.clone();
+                                    let vh = view.clone();
+                                    render_change_row(change, is_selected)
+                                        .id(SharedString::from(format!("change-{}", change.path)))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::hover_bg()))
+                                        .on_click(move |_evt, _win, cx| {
+                                            let path = path.clone();
+                                            vh.update(cx, |app, cx| {
+                                                app.selection.selected_change = Some(path);
+                                                cx.notify();
+                                            });
+                                        })
+                                        .into_any_element()
+                                })
+                                .collect()
+                        }
+                    })
+                    .flex_1()
+                    .with_sizing_behavior(ListSizingBehavior::Infer),
+                )
             }
         }
         SidebarTab::History => {
             if history.is_empty() {
-                inner = inner.child(render_empty_state("No history"));
+                div().flex_1().child(render_empty_state("No history"))
             } else {
-                for commit in history {
-                    let is_selected =
-                        selected_commit.as_deref() == Some(commit.oid.as_str());
-                    let oid = commit.oid.clone();
-                    let vh = view.clone();
-                    inner = inner.child(
-                        render_history_row(commit, is_selected)
-                            .id(SharedString::from(format!("commit-{}", commit.oid)))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(theme::hover_bg()))
-                            .on_click(move |_evt, _win, cx| {
-                                let oid = oid.clone();
-                                vh.update(cx, |app, cx| {
-                                    app.select_commit(oid, cx);
-                                });
-                            }),
-                    );
-                }
+                let history_snapshot: Vec<CommitInfo> = history.to_vec();
+                let sel = selected_commit.clone();
+                div().flex_1().child(
+                    uniform_list("history-list", history_snapshot.len(), {
+                        let view = view.clone();
+                        move |range, _win, _cx| {
+                            range
+                                .map(|ix| {
+                                    let commit = &history_snapshot[ix];
+                                    let is_selected =
+                                        sel.as_deref() == Some(commit.oid.as_str());
+                                    let oid = commit.oid.clone();
+                                    let vh = view.clone();
+                                    render_history_row(commit, is_selected)
+                                        .id(SharedString::from(format!(
+                                            "commit-{}",
+                                            commit.oid
+                                        )))
+                                        .cursor_pointer()
+                                        .hover(|s| s.bg(theme::hover_bg()))
+                                        .on_click(move |_evt, _win, cx| {
+                                            let oid = oid.clone();
+                                            vh.update(cx, |app, cx| {
+                                                app.select_commit(oid, cx);
+                                            });
+                                        })
+                                        .into_any_element()
+                                })
+                                .collect()
+                        }
+                    })
+                    .flex_1()
+                    .with_sizing_behavior(ListSizingBehavior::Infer),
+                )
             }
         }
-    }
-
-    let content = div()
-        .id("sidebar-content")
-        .flex_1()
-        .overflow_y_scroll()
-        .child(inner);
+    };
 
     v_flex()
         .size_full()
@@ -163,9 +189,9 @@ fn render_interactive_tab_bar(
                 .px(px(6.0))
                 .py(px(1.0))
                 .rounded(px(10.0))
-                .bg(theme::toolbar_badge_bg()) // --tab-bar-count-background-color: $gray-700
+                .bg(theme::toolbar_badge_bg())
                 .text_size(px(theme::FONT_SIZE_XS))
-                .text_color(theme::text_main()) // --tab-bar-count-color: var(--text-color)
+                .text_color(theme::text_main())
                 .child(change_count.to_string()),
         );
     }
@@ -208,21 +234,18 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
         theme::text_main()
     };
 
-    // Checkbox: filled blue when selected, outline when not
-    let checkbox = render_checkbox(true); // all files included for now
+    let checkbox = render_checkbox(true);
 
     h_flex()
         .w_full()
-        .h(px(29.0)) // match GitHub Desktop --tab-bar-height row sizing
+        .h(px(CHANGE_ROW_HEIGHT))
         .px(px(10.0))
         .items_center()
         .bg(bg)
         .border_b_1()
         .border_color(theme::toolbar_button_border())
         .gap(px(5.0))
-        // Checkbox
         .child(checkbox)
-        // File path — CSS-style overflow truncation
         .child(
             div()
                 .flex_1()
@@ -235,11 +258,9 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
                         .child(change.path.clone()),
                 ),
         )
-        // Status tag (A/M/D)
         .child(status_tag(badge_label))
 }
 
-/// Render a checkbox visual (non-interactive for now).
 fn render_checkbox(checked: bool) -> Div {
     let size = 14.0;
     if checked {
@@ -257,7 +278,7 @@ fn render_checkbox(checked: bool) -> Div {
                 div()
                     .text_size(px(10.0))
                     .text_color(gpui::white())
-                    .child("\u{2713}"), // ✓
+                    .child("\u{2713}"),
             )
     } else {
         div()
