@@ -1,3 +1,6 @@
+// Suppress the console window on Windows for GUI apps.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod ai;
 mod git;
 mod models;
