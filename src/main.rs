@@ -4,18 +4,41 @@ mod models;
 mod storage;
 mod ui;
 
-fn main() -> eframe::Result<()> {
-    let saved_settings = storage::load_settings().unwrap_or_default();
-    let options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default().with_inner_size([
-            saved_settings.window_size.width,
-            saved_settings.window_size.height,
-        ]),
-        ..Default::default()
+use gpui::*;
+
+use crate::storage::load_settings;
+use crate::ui::GitSparkApp;
+
+fn main() {
+    let settings = match load_settings() {
+        Ok(s) => s,
+        Err(_) => models::AppSettings::default(),
     };
-    eframe::run_native(
-        "GitSpark",
-        options,
-        Box::new(|cc| Ok(Box::new(ui::GitSparkApp::new(cc)))),
-    )
+
+    let initial_width = settings.window_size.width;
+    let initial_height = settings.window_size.height;
+
+    let app = Application::new();
+    app.run(move |cx| {
+        gpui_component::init(cx);
+        // Force dark theme on gpui-component to match our GitHub Dark theme
+        gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
+                    None,
+                    size(px(initial_width), px(initial_height)),
+                    cx,
+                ))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("GitSpark".into()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |_window, cx| cx.new(|cx| GitSparkApp::new(settings.clone(), cx)),
+        )
+        .unwrap();
+    });
 }

@@ -34,12 +34,11 @@ impl NetworkAction {
         }
     }
 
-    pub fn icon(self) -> &'static str {
-        use egui_phosphor::regular as icons;
+    pub fn icon_name(self) -> &'static str {
         match self {
-            Self::Fetch => icons::ARROW_CLOCKWISE,
-            Self::Pull => icons::ARROW_DOWN,
-            Self::Push => icons::ARROW_UP,
+            Self::Fetch => "arrow-clockwise",
+            Self::Pull => "arrow-down",
+            Self::Push => "arrow-up",
         }
     }
 }
