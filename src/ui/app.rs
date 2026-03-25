@@ -8,6 +8,7 @@ use std::{env, process::Command};
 
 use gpui::*;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
+use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex, Sizable};
 use rfd::FileDialog;
 
@@ -1076,14 +1077,21 @@ impl Render for GitSparkApp {
         let mut root = v_flex()
             .size_full()
             .bg(theme::bg())
+            .font_family("system-ui") // match GitHub Desktop: system-ui, sans-serif
+            .text_size(px(theme::FONT_SIZE))
             .child(self.render_toolbar(cx))
             .child(
-                h_flex()
-                    .flex_1()
-                    .items_start()
-                    .overflow_hidden()
-                    .child(self.render_sidebar(summary_focused, description_focused, cx))
-                    .child(self.render_workspace(cx)),
+                h_resizable("main-panels")
+                    .child(
+                        resizable_panel()
+                            .size(px(260.0))
+                            .size_range(px(200.0)..px(400.0))
+                            .child(self.render_sidebar(summary_focused, description_focused, cx)),
+                    )
+                    .child(
+                        resizable_panel()
+                            .child(self.render_workspace(cx)),
+                    ),
             )
             .child(self.render_status_bar());
 
@@ -1659,26 +1667,26 @@ impl GitSparkApp {
         // For History tab, show a file list panel on the left of the workspace.
         if sidebar_tab == SidebarTab::History && !diffs.is_empty() {
             let file_list = self.render_commit_file_list(diffs, selected_file, cx);
-            h_flex()
-                .flex_1()
-                .h_full()
-                .items_start()
-                .overflow_hidden()
-                .child(file_list)
-                .child(crate::ui::workspace::render_workspace(
-                    selected_file,
-                    selected_diff,
-                ))
+            h_resizable("workspace-panels")
+                .child(
+                    resizable_panel()
+                        .size(px(240.0))
+                        .size_range(px(150.0)..px(400.0))
+                        .child(file_list),
+                )
+                .child(
+                    resizable_panel().child(crate::ui::workspace::render_workspace(
+                        selected_file,
+                        selected_diff,
+                    )),
+                )
         } else {
-            h_flex()
-                .flex_1()
-                .h_full()
-                .items_start()
-                .overflow_hidden()
-                .child(crate::ui::workspace::render_workspace(
+            h_resizable("workspace-panels").child(
+                resizable_panel().child(crate::ui::workspace::render_workspace(
                     selected_file,
                     selected_diff,
-                ))
+                )),
+            )
         }
     }
 
@@ -1758,8 +1766,7 @@ impl GitSparkApp {
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
         v_flex()
-            .w(px(240.0))
-            .h_full()
+            .size_full()
             .items_start()
             .bg(theme::panel_bg())
             .border_r_1()

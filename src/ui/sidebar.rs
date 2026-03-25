@@ -134,9 +134,7 @@ pub fn render_sidebar_interactive(
         .child(inner);
 
     v_flex()
-        .w(px(260.0))
-        .h_full()
-        .flex_shrink_0()
+        .size_full()
         .bg(theme::panel_bg())
         .border_r_1()
         .border_color(theme::border())
