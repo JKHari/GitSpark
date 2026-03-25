@@ -5,6 +5,7 @@ mod storage;
 mod ui;
 
 use gpui::*;
+use gpui_component_assets::Assets;
 
 use crate::storage::load_settings;
 use crate::ui::GitSparkApp;
@@ -18,7 +19,7 @@ fn main() {
     let initial_width = settings.window_size.width;
     let initial_height = settings.window_size.height;
 
-    let app = Application::new();
+    let app = Application::new().with_assets(Assets);
     app.run(move |cx| {
         gpui_component::init(cx);
         // Force dark theme on gpui-component to match our GitHub Dark theme

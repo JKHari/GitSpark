@@ -30,6 +30,7 @@ pub struct NavState {
     pub sidebar_tab: SidebarTab,
     pub show_settings: bool,
     pub show_repo_selector: bool,
+    pub show_branch_selector: bool,
     pub settings_section: SettingsSection,
 }
 
@@ -40,6 +41,7 @@ impl Default for NavState {
             sidebar_tab: SidebarTab::Changes,
             show_settings: false,
             show_repo_selector: false,
+            show_branch_selector: false,
             settings_section: SettingsSection::Git,
         }
     }

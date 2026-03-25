@@ -9,14 +9,14 @@ use std::{env, process::Command};
 use gpui::*;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::{h_flex, v_flex, Sizable};
+use gpui_component::{h_flex, v_flex, Icon, IconName, Sizable};
 use rfd::FileDialog;
 
 use crate::ai::AiClient;
 use crate::git::GitClient;
 use crate::models::{
-    AiProvider, AppSettings, CommitSuggestion, DiffEntry, GitIdentity, RemoteModelOption,
-    RepoSnapshot,
+    AiProvider, AppSettings, BranchInfo, CommitSuggestion, DiffEntry, GitIdentity,
+    RemoteModelOption, RepoSnapshot,
 };
 use crate::storage::{push_recent_repo, save_settings};
 use crate::ui::domain_state::{CommitState, NetworkAction, NetworkState, RepoState, SelectionState};
@@ -342,6 +342,7 @@ impl GitSparkApp {
         match action {
             ToolbarAction::ToggleRepoSelector => {
                 self.nav.show_repo_selector = !self.nav.show_repo_selector;
+                self.nav.show_branch_selector = false;
             }
             ToolbarAction::SwitchBranch(name) => {
                 self.repo.branch_target = name;
@@ -1088,6 +1089,8 @@ impl Render for GitSparkApp {
                             .size_range(px(200.0)..px(400.0))
                             .child(if self.nav.show_repo_selector {
                                 self.render_repo_selector_panel(cx).into_any_element()
+                            } else if self.nav.show_branch_selector {
+                                self.render_branch_selector_panel(cx).into_any_element()
                             } else {
                                 self.render_sidebar(summary_focused, description_focused, cx)
                                     .into_any_element()
@@ -1146,7 +1149,12 @@ impl GitSparkApp {
             }));
 
         // Branch section — placeholder click (no dropdown yet)
-        let branch_section = toolbar::render_branch_section(branch_name);
+        let branch_section = toolbar::render_branch_section(branch_name)
+            .on_click(cx.listener(|app, _evt, _win, cx| {
+                app.nav.show_branch_selector = !app.nav.show_branch_selector;
+                app.nav.show_repo_selector = false;
+                cx.notify();
+            }));
 
         // Network section — click runs the primary network action
         let net_action = network_action;
@@ -1521,7 +1529,7 @@ impl GitSparkApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         // Action bar buttons (below description, matching GitHub Desktop layout)
-        let action_bar_btn = |id: &str, label: &str| -> Stateful<Div> {
+        let action_bar_btn = |id: &str, icon: IconName| -> Stateful<Div> {
             div()
                 .id(SharedString::from(id.to_string()))
                 .flex_shrink_0()
@@ -1533,19 +1541,18 @@ impl GitSparkApp {
                 .items_center()
                 .justify_center()
                 .child(
-                    div()
-                        .text_size(px(12.0))
-                        .text_color(theme::text_muted())
-                        .child(label.to_string()),
+                    Icon::new(icon)
+                        .size(px(14.0))
+                        .text_color(theme::text_muted()),
                 )
         };
 
-        let sparkle_button = action_bar_btn("ai-generate-btn", "\u{2728}")
+        let sparkle_button = action_bar_btn("ai-generate-btn", IconName::Star)
             .on_click(cx.listener(|app, _evt, _win, cx| {
                 app.generate_ai_commit(cx);
             }));
 
-        let settings_button = action_bar_btn("commit-settings-btn", "\u{2699}")
+        let settings_button = action_bar_btn("commit-settings-btn", IconName::Settings)
             .on_click(cx.listener(|app, _evt, _win, cx| {
                 app.nav.show_settings = true;
                 cx.notify();
@@ -1903,10 +1910,9 @@ impl GitSparkApp {
                     .border_color(theme::accent())
                     .bg(theme::bg())
                     .child(
-                        div()
-                            .text_size(px(14.0))
-                            .text_color(theme::text_muted())
-                            .child("\u{1F50D}"),
+                        Icon::new(IconName::Search)
+                            .size(px(14.0))
+                            .text_color(theme::text_muted()),
                     )
                     .child(
                         div()
@@ -1944,10 +1950,9 @@ impl GitSparkApp {
                                     .child("Add"),
                             )
                             .child(
-                                div()
-                                    .text_size(px(8.0))
-                                    .text_color(theme::text_muted())
-                                    .child("\u{25BC}"),
+                                Icon::new(IconName::ChevronDown)
+                                    .size(px(8.0))
+                                    .text_color(theme::text_muted()),
                             ),
                     ),
             );
@@ -2012,13 +2017,11 @@ impl GitSparkApp {
                                     } else {
                                         gpui::transparent_black()
                                     })
-                                    // Repo icon (lock = private-like)
+                                    // Repo icon
                                     .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .text_size(px(16.0))
-                                            .text_color(theme::text_muted())
-                                            .child("\u{1F512}"),
+                                        Icon::new(IconName::FolderClosed)
+                                            .size(px(16.0))
+                                            .text_color(theme::text_muted()),
                                     )
                                     // Repo name
                                     .child(
@@ -2072,6 +2075,334 @@ impl GitSparkApp {
             .child(filter_bar)
             .child(section_header)
             .child(repo_list)
+    }
+
+    // ------------------------------------------------------------------
+    // Branch selector (full-width panel)
+    // ------------------------------------------------------------------
+
+    fn render_branch_selector_panel(&self, cx: &mut Context<Self>) -> Div {
+        let snapshot = self.repo.snapshot.as_ref();
+        let current_branch = snapshot
+            .map(|s| s.repo.current_branch.clone())
+            .unwrap_or_else(|| "main".to_string());
+        let branches: Vec<BranchInfo> = snapshot
+            .map(|s| s.branches.clone())
+            .unwrap_or_default();
+
+        // Separate local branches only (skip remotes)
+        let local_branches: Vec<&BranchInfo> =
+            branches.iter().filter(|b| !b.is_remote).collect();
+
+        // Find default branch (current one)
+        let default_branch = local_branches
+            .iter()
+            .find(|b| b.is_current)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| current_branch.clone());
+
+        // --- Header: Current Branch + caret up ---
+        let header = h_flex()
+            .id("branch-selector-header")
+            .w_full()
+            .h(px(theme::TOOLBAR_HEIGHT))
+            .flex_shrink_0()
+            .bg(theme::toolbar_bg())
+            .border_b_1()
+            .border_color(theme::toolbar_button_border())
+            .px(px(10.0))
+            .gap(px(10.0))
+            .items_center()
+            .cursor_pointer()
+            .on_click(cx.listener(|app, _evt, _win, cx| {
+                app.nav.show_branch_selector = false;
+                cx.notify();
+            }))
+            // Branch icon
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .child(
+                        Icon::new(IconName::GitHub)
+                            .size(px(16.0))
+                            .text_color(theme::text_main()),
+                    )
+            )
+            // Text
+            .child(
+                v_flex()
+                    .flex_1()
+                    .gap(px(2.0))
+                    .overflow_hidden()
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE_SM))
+                            .text_color(theme::text_muted())
+                            .child("Current Branch"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_main())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .overflow_x_hidden()
+                            .whitespace_nowrap()
+                            .child(current_branch.clone()),
+                    ),
+            )
+            // Caret up
+            .child(
+                div().flex_shrink_0().child(
+                    gpui_component::Icon::new(gpui_component::IconName::ChevronUp)
+                        .size(px(10.0))
+                        .text_color(theme::text_muted()),
+                ),
+            );
+
+        // --- Tab bar: Branches | Pull Requests ---
+        let tab_bar = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .border_b_1()
+            .border_color(theme::toolbar_button_border())
+            .child(
+                div()
+                    .flex_1()
+                    .h(px(34.0))
+                    .items_center()
+                    .justify_center()
+                    .border_b_2()
+                    .border_color(theme::accent())
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_main())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Branches"),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .h(px(34.0))
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_muted())
+                            .child("Pull Requests"),
+                    ),
+            );
+
+        // --- Filter bar ---
+        let filter_bar = h_flex()
+            .w_full()
+            .flex_shrink_0()
+            .px(px(10.0))
+            .py(px(10.0))
+            .gap(px(8.0))
+            .items_center()
+            .child(
+                h_flex()
+                    .flex_1()
+                    .h(px(28.0))
+                    .px(px(8.0))
+                    .items_center()
+                    .gap(px(6.0))
+                    .rounded(px(theme::CORNER_RADIUS))
+                    .border_1()
+                    .border_color(theme::accent())
+                    .bg(theme::bg())
+                    .child(
+                        Icon::new(IconName::Search)
+                            .size(px(14.0))
+                            .text_color(theme::text_muted()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_muted())
+                            .child("Filter"),
+                    ),
+            )
+            .child(
+                div()
+                    .id("branch-new-btn")
+                    .flex_shrink_0()
+                    .h(px(28.0))
+                    .px(px(12.0))
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(theme::CORNER_RADIUS))
+                    .bg(theme::surface_bg())
+                    .border_1()
+                    .border_color(theme::surface_bg_alt())
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::toolbar_hover_bg()))
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_main())
+                            .child("New Branch"),
+                    ),
+            );
+
+        // --- Section header ---
+        let section_header = div()
+            .w_full()
+            .px(px(10.0))
+            .py(px(8.0))
+            .child(
+                div()
+                    .text_size(px(theme::FONT_SIZE))
+                    .text_color(theme::text_main())
+                    .font_weight(FontWeight::BOLD)
+                    .child("Default Branch"),
+            );
+
+        // --- Branch list ---
+        let branch_list = if local_branches.is_empty() {
+            div().flex_1().child(
+                div()
+                    .w_full()
+                    .py(px(20.0))
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(theme::text_muted())
+                            .child("No branches"),
+                    ),
+            )
+        } else {
+            let branches_owned: Vec<BranchInfo> = local_branches.iter().map(|b| (*b).clone()).collect();
+            let count = branches_owned.len();
+            let view = cx.entity().clone();
+            div().flex_1().child(
+                uniform_list("branch-list", count, {
+                    move |range, _win, _cx| {
+                        range
+                            .map(|ix| {
+                                let branch = &branches_owned[ix];
+                                let is_current = branch.is_current;
+                                let name = branch.name.clone();
+                                let vh = view.clone();
+
+                                h_flex()
+                                    .id(SharedString::from(format!("branch-{}", branch.name)))
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(10.0))
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::hover_bg()))
+                                    .bg(if is_current {
+                                        theme::hover_bg()
+                                    } else {
+                                        gpui::transparent_black()
+                                    })
+                                    // Checkmark for current branch
+                                    .child({
+                                        let mut check_slot = div()
+                                            .w(px(20.0))
+                                            .flex_shrink_0()
+                                            .items_center()
+                                            .justify_center();
+                                        if is_current {
+                                            check_slot = check_slot.child(
+                                                Icon::new(IconName::Check)
+                                                    .size(px(14.0))
+                                                    .text_color(theme::text_main()),
+                                            );
+                                        }
+                                        check_slot
+                                    })
+                                    // Branch name
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .overflow_x_hidden()
+                                            .child(
+                                                div()
+                                                    .text_size(px(theme::FONT_SIZE))
+                                                    .text_color(theme::text_main())
+                                                    .whitespace_nowrap()
+                                                    .child(branch.name.clone()),
+                                            ),
+                                    )
+                                    .on_click(move |_evt, _win, cx| {
+                                        let name = name.clone();
+                                        vh.update(cx, |app, cx| {
+                                            if !app
+                                                .repo
+                                                .snapshot
+                                                .as_ref()
+                                                .map(|s| s.repo.current_branch == name)
+                                                .unwrap_or(false)
+                                            {
+                                                app.repo.branch_target = name;
+                                                app.switch_branch(cx);
+                                            }
+                                            app.nav.show_branch_selector = false;
+                                            cx.notify();
+                                        });
+                                    })
+                                    .into_any_element()
+                            })
+                            .collect()
+                    }
+                })
+                .flex_1()
+                .with_sizing_behavior(ListSizingBehavior::Infer),
+            )
+        };
+
+        // --- Bottom bar: merge prompt ---
+        let bottom_bar = h_flex()
+            .w_full()
+            .h(px(40.0))
+            .flex_shrink_0()
+            .border_t_1()
+            .border_color(theme::toolbar_button_border())
+            .px(px(10.0))
+            .items_center()
+            .justify_center()
+            .gap(px(6.0))
+            .child(
+                Icon::new(IconName::GitHub)
+                    .size(px(16.0))
+                    .text_color(theme::text_muted()),
+            )
+            .child(
+                h_flex()
+                    .gap(px(4.0))
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_muted())
+                            .child("Choose a branch to merge into"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_main())
+                            .font_weight(FontWeight::BOLD)
+                            .child(default_branch),
+                    ),
+            );
+
+        v_flex()
+            .size_full()
+            .bg(theme::panel_bg())
+            .child(header)
+            .child(tab_bar)
+            .child(filter_bar)
+            .child(section_header)
+            .child(branch_list)
+            .child(bottom_bar)
     }
 
     // ------------------------------------------------------------------
@@ -2185,10 +2516,9 @@ impl GitSparkApp {
                     .px(px(6.0))
                     .py(px(2.0))
                     .child(
-                        div()
-                            .text_size(px(16.0))
-                            .text_color(theme::text_muted())
-                            .child("\u{2715}"),
+                        Icon::new(IconName::Close)
+                            .size(px(16.0))
+                            .text_color(theme::text_muted()),
                     )
                     .on_click(cx.listener(|app, _evt, _win, cx| {
                         app.nav.show_settings = false;

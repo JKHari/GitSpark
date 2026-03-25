@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
-use gpui_component::{h_flex, v_flex, Sizable};
+use gpui_component::{h_flex, v_flex, Icon, IconName, Sizable};
 
 use crate::models::{ChangeEntry, CommitInfo};
 use crate::ui::app::GitSparkApp;
@@ -275,10 +275,9 @@ fn render_checkbox(checked: bool) -> Div {
             .items_center()
             .justify_center()
             .child(
-                div()
-                    .text_size(px(10.0))
-                    .text_color(gpui::white())
-                    .child("\u{2713}"),
+                Icon::new(IconName::Check)
+                    .size(px(10.0))
+                    .text_color(gpui::white()),
             )
     } else {
         div()
