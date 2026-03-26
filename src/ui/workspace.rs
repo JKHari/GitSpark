@@ -157,46 +157,27 @@ fn parse_diff(raw: &str) -> Vec<DiffLine> {
             let del_count = del_end - del_start;
             let add_count = add_end - add_start;
 
-            if del_count > 0 && del_count == add_count {
-                // Paired: create Modified lines
-                for j in 0..del_count {
-                    let del_line = raw_lines[del_start + j].as_ref().unwrap();
-                    let add_line = raw_lines[add_start + j].as_ref().unwrap();
-                    let (old_highlight, new_highlight) =
-                        find_changed_ranges(&del_line.content, &add_line.content);
-                    result.push(DiffLine {
-                        kind: DiffLineKind::Modified {
-                            old_highlight,
-                            new_highlight,
-                        },
-                        content: del_line.content.clone(),
-                        new_content: Some(add_line.content.clone()),
-                        old_line: del_line.old_line,
-                        new_line: add_line.new_line,
-                    });
-                }
-            } else {
-                // Unpaired: emit as separate Deleted and Added
-                for j in del_start..del_end {
-                    let l = raw_lines[j].as_ref().unwrap();
-                    result.push(DiffLine {
-                        kind: DiffLineKind::Deleted,
-                        content: l.content.clone(),
-                        new_content: None,
-                        old_line: l.old_line,
-                        new_line: None,
-                    });
-                }
-                for j in add_start..add_end {
-                    let l = raw_lines[j].as_ref().unwrap();
-                    result.push(DiffLine {
-                        kind: DiffLineKind::Added,
-                        content: l.content.clone(),
-                        new_content: None,
-                        old_line: None,
-                        new_line: l.new_line,
-                    });
-                }
+            // Always emit as separate Deleted then Added lines
+            // (matches GitHub Desktop unified diff layout)
+            for j in del_start..del_end {
+                let l = raw_lines[j].as_ref().unwrap();
+                result.push(DiffLine {
+                    kind: DiffLineKind::Deleted,
+                    content: l.content.clone(),
+                    new_content: None,
+                    old_line: l.old_line,
+                    new_line: None,
+                });
+            }
+            for j in add_start..add_end {
+                let l = raw_lines[j].as_ref().unwrap();
+                result.push(DiffLine {
+                    kind: DiffLineKind::Added,
+                    content: l.content.clone(),
+                    new_content: None,
+                    old_line: None,
+                    new_line: l.new_line,
+                });
             }
         } else if line.is_add {
             // Standalone added line (not preceded by deletes)
