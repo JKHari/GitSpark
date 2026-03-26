@@ -19,14 +19,28 @@ fn main() {
         Err(_) => models::AppSettings::default(),
     };
 
-    let initial_width = settings.window_size.width;
-    let initial_height = settings.window_size.height;
-
     let app = Application::new().with_assets(Assets);
     app.run(move |cx| {
         gpui_component::init(cx);
         // Force dark theme on gpui-component to match our GitHub Dark theme
         gpui_component::Theme::change(gpui_component::ThemeMode::Dark, None, cx);
+
+        // Use saved window size, or derive from primary display:
+        //   60% of display width/height, capped to 16:9, min 960×600
+        let (initial_width, initial_height) = if settings.window_size.width > 0.0
+            && settings.window_size.height > 0.0
+        {
+            (settings.window_size.width, settings.window_size.height)
+        } else if let Some(display) = cx.primary_display() {
+            let dw = display.bounds().size.width.0;
+            let dh = display.bounds().size.height.0;
+            let win_h = (dh * 0.6).max(600.0);
+            let max_w = win_h * 16.0 / 9.0;
+            let win_w = (dw * 0.6).max(960.0).min(max_w);
+            (win_w, win_h)
+        } else {
+            (1280.0, 860.0)
+        };
 
         cx.open_window(
             WindowOptions {

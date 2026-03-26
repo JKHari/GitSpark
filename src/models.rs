@@ -136,8 +136,8 @@ pub struct WindowSize {
 impl Default for WindowSize {
     fn default() -> Self {
         Self {
-            width: 1280.0,
-            height: 860.0,
+            width: 0.0,  // 0 = use 60% of screen
+            height: 0.0,
         }
     }
 }
