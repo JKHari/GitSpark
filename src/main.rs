@@ -59,7 +59,8 @@ fn main() {
                 ))),
                 titlebar: Some(TitlebarOptions {
                     title: Some("GitSpark".into()),
-                    ..Default::default()
+                    appears_transparent: true,
+                    traffic_light_position: Some(point(px(10.0), px(12.0))),
                 }),
                 ..Default::default()
             },
