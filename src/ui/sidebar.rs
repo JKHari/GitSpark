@@ -196,7 +196,7 @@ fn render_interactive_tab_bar(
         );
     }
 
-    let changes_tab = div()
+    let changes_tab = h_flex()
         .id("tab-changes")
         .flex_1()
         .h(z(34.0))
@@ -216,7 +216,7 @@ fn render_interactive_tab_bar(
         }))
         .child(changes_content);
 
-    let history_tab = div()
+    let history_tab = h_flex()
         .id("tab-history")
         .flex_1()
         .h(z(34.0))
