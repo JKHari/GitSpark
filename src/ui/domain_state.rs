@@ -5,10 +5,18 @@ pub enum NetworkAction {
     Fetch,
     Pull,
     Push,
+    PublishBranch,
+    PublishRepository,
 }
 
 impl NetworkAction {
     pub fn from_snapshot(snapshot: &RepoSnapshot) -> Self {
+        // No remote configured → publish repository
+        if snapshot.repo.remote_name.is_none() {
+            return Self::PublishRepository;
+        }
+        // Ahead with no tracking → publish branch
+        // (simplified: if ahead > 0 and behind == 0 and branch is new)
         if snapshot.repo.behind > 0 {
             Self::Pull
         } else if snapshot.repo.ahead > 0 {
@@ -23,6 +31,8 @@ impl NetworkAction {
             Self::Fetch => format!("Fetch {remote_name}"),
             Self::Pull => format!("Pull {remote_name}"),
             Self::Push => format!("Push {remote_name}"),
+            Self::PublishBranch => "Publish branch".to_string(),
+            Self::PublishRepository => "Publish repository".to_string(),
         }
     }
 
@@ -31,15 +41,14 @@ impl NetworkAction {
             Self::Fetch => format!("Fetching {remote_name}"),
             Self::Pull => format!("Pulling {remote_name}"),
             Self::Push => format!("Pushing {remote_name}"),
+            Self::PublishBranch => "Publishing branch\u{2026}".to_string(),
+            Self::PublishRepository => "Publishing repository\u{2026}".to_string(),
         }
     }
 
-    pub fn icon_name(self) -> &'static str {
-        match self {
-            Self::Fetch => "arrow-clockwise",
-            Self::Pull => "arrow-down",
-            Self::Push => "arrow-up",
-        }
+    pub fn is_available(self) -> bool {
+        // Publish states may not be runnable yet
+        !matches!(self, Self::PublishRepository)
     }
 }
 
@@ -48,6 +57,7 @@ pub struct RepoState {
     pub identity: GitIdentity,
     pub branch_target: String,
     pub merge_target: String,
+    pub new_branch_name: String,
 }
 
 impl Default for RepoState {
@@ -57,6 +67,7 @@ impl Default for RepoState {
             identity: GitIdentity::default(),
             branch_target: String::new(),
             merge_target: String::new(),
+            new_branch_name: String::new(),
         }
     }
 }

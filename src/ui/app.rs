@@ -343,6 +343,7 @@ impl GitSparkApp {
             ToolbarAction::ToggleRepoSelector => {
                 self.nav.show_repo_selector = !self.nav.show_repo_selector;
                 self.nav.show_branch_selector = false;
+                self.nav.show_network_dropdown = false;
             }
             ToolbarAction::SwitchBranch(name) => {
                 self.repo.branch_target = name;
@@ -606,7 +607,10 @@ impl GitSparkApp {
             let res = match action {
                 NetworkAction::Fetch => git.fetch_origin(&path),
                 NetworkAction::Pull => git.pull_origin(&path),
-                NetworkAction::Push => git.push_origin(&path),
+                NetworkAction::Push | NetworkAction::PublishBranch => git.push_origin(&path),
+                NetworkAction::PublishRepository => {
+                    Err(anyhow::anyhow!("Publish repository is not yet implemented"))
+                }
             }
             .map_err(|e| e.to_string());
 
@@ -644,6 +648,31 @@ impl GitSparkApp {
                 .map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::BranchSwitched(res, target));
         });
+        cx.notify();
+    }
+
+    fn create_branch(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.repo_path().map(PathBuf::from) else {
+            self.messages.error_message = "No repository selected.".to_string();
+            return;
+        };
+
+        let name = self.repo.new_branch_name.trim().to_string();
+        if name.is_empty() {
+            self.messages.error_message = "Branch name cannot be empty.".to_string();
+            return;
+        }
+
+        self.messages.status_message = format!("Creating branch '{name}'...");
+        self.messages.error_message.clear();
+        let tx = self.event_tx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.create_branch(&path, &name).map_err(|e| e.to_string());
+            tx.send(AppEvent::BranchSwitched(res, name));
+        });
+        self.repo.new_branch_name.clear();
+        self.nav.show_branch_selector = false;
         cx.notify();
     }
 
@@ -1075,31 +1104,51 @@ impl Render for GitSparkApp {
         let summary_focused = self.summary_focus.is_focused(window);
         let description_focused = self.description_focus.is_focused(window);
 
+        // Build toolbar parts separately — they go into the resizable columns
+        let (toolbar_left, toolbar_right) = self.render_toolbar_parts(cx);
+
+        // Left column: repo toolbar section + sidebar (or repo selector)
+        let left_column = v_flex()
+            .size_full()
+            .child(toolbar_left)
+            .child(if self.nav.show_repo_selector {
+                self.render_repo_selector_panel(cx).into_any_element()
+            } else {
+                self.render_sidebar(summary_focused, description_focused, cx)
+                    .into_any_element()
+            });
+
+        // Right column: branch + network toolbar sections + workspace
+        // Branch selector overlay lives inside the right column so it aligns naturally
+        let right_column = div()
+            .size_full()
+            .relative()
+            .child(
+                v_flex()
+                    .size_full()
+                    .child(toolbar_right)
+                    .child(self.render_workspace(cx)),
+            )
+            .children(if self.nav.show_branch_selector {
+                Some(self.render_branch_selector_overlay(cx))
+            } else {
+                None
+            });
+
         let mut root = v_flex()
             .size_full()
             .bg(theme::bg())
-            .font_family("system-ui") // match GitHub Desktop: system-ui, sans-serif
+            .font_family("system-ui")
             .text_size(px(theme::FONT_SIZE))
-            .child(self.render_toolbar(cx))
             .child(
                 h_resizable("main-panels")
                     .child(
                         resizable_panel()
                             .size(px(260.0))
                             .size_range(px(200.0)..px(400.0))
-                            .child(if self.nav.show_repo_selector {
-                                self.render_repo_selector_panel(cx).into_any_element()
-                            } else if self.nav.show_branch_selector {
-                                self.render_branch_selector_panel(cx).into_any_element()
-                            } else {
-                                self.render_sidebar(summary_focused, description_focused, cx)
-                                    .into_any_element()
-                            }),
+                            .child(left_column),
                     )
-                    .child(
-                        resizable_panel()
-                            .child(self.render_workspace(cx)),
-                    ),
+                    .child(resizable_panel().child(right_column)),
             )
             .child(self.render_status_bar());
 
@@ -1116,7 +1165,8 @@ impl GitSparkApp {
     // Toolbar
     // ------------------------------------------------------------------
 
-    fn render_toolbar(&self, cx: &mut Context<Self>) -> Div {
+    /// Returns (left_toolbar, right_toolbar) so they can go into separate resizable columns.
+    fn render_toolbar_parts(&self, cx: &mut Context<Self>) -> (Div, Div) {
         use crate::ui::toolbar;
 
         let snapshot = self.repo.snapshot.as_ref();
@@ -1135,51 +1185,111 @@ impl GitSparkApp {
         let remote_name = snapshot
             .and_then(|s| s.repo.remote_name.as_deref())
             .unwrap_or("origin");
-        let network_label = if self.network.active_action.is_some() {
+        let is_in_flight = self.network.active_action.is_some();
+        let network_label = if is_in_flight {
             network_action.pending_title(remote_name)
         } else {
             network_action.title(remote_name)
         };
         let last_fetched = snapshot.and_then(|s| s.repo.last_fetched.as_deref());
 
-        // Repo section — click toggles repo selector
-        let repo_section = toolbar::render_repo_section(repo_name)
-            .on_click(cx.listener(|app, _evt, _win, cx| {
-                app.handle_toolbar_action(ToolbarAction::ToggleRepoSelector, cx);
-            }));
-
-        // Branch section — placeholder click (no dropdown yet)
-        let branch_section = toolbar::render_branch_section(branch_name)
-            .on_click(cx.listener(|app, _evt, _win, cx| {
-                app.nav.show_branch_selector = !app.nav.show_branch_selector;
-                app.nav.show_repo_selector = false;
-                cx.notify();
-            }));
-
-        // Network section — click runs the primary network action
-        let net_action = network_action;
-        let network_section = toolbar::render_network_section(
-            &network_label,
-            ahead,
-            behind,
-            last_fetched,
+        // --- Left: repo section ---
+        let repo_section = toolbar::render_toolbar_section(
+            "section-repo",
+            IconName::FolderOpen,
+            "Current Repository",
+            repo_name,
+            self.nav.show_repo_selector,
+            false,
         )
-        .on_click(cx.listener(move |app, _evt, _win, cx| {
-            app.handle_toolbar_action(ToolbarAction::RunNetworkAction(net_action), cx);
+        .on_click(cx.listener(|app, _evt, _win, cx| {
+            app.handle_toolbar_action(ToolbarAction::ToggleRepoSelector, cx);
         }));
 
-        h_flex()
+        let left = h_flex()
             .w_full()
             .h(px(theme::TOOLBAR_HEIGHT))
             .flex_shrink_0()
             .bg(theme::toolbar_bg())
             .border_b_1()
             .border_color(theme::toolbar_button_border())
-            .child(repo_section)
-            .child(toolbar::vertical_divider())
+            .child(repo_section);
+
+        // --- Right: branch section + divider + network section ---
+        let branch_section = toolbar::render_toolbar_section(
+            "section-branch",
+            IconName::GitHub,
+            "Current Branch",
+            branch_name,
+            self.nav.show_branch_selector,
+            false,
+        )
+        .on_click(cx.listener(|app, _evt, _win, cx| {
+            app.nav.show_branch_selector = !app.nav.show_branch_selector;
+            app.nav.show_repo_selector = false;
+            app.nav.show_network_dropdown = false;
+            cx.notify();
+        }));
+
+        let (network_main, network_caret) = toolbar::render_network_parts(
+            &network_label,
+            ahead,
+            behind,
+            last_fetched,
+            is_in_flight,
+            self.nav.show_network_dropdown,
+        );
+
+        let net_action = network_action;
+        let network_main = network_main.on_click(
+            cx.listener(move |app, _evt, _win, cx| {
+                if app.network.active_action.is_none() {
+                    app.nav.show_network_dropdown = false;
+                    app.handle_toolbar_action(
+                        ToolbarAction::RunNetworkAction(net_action),
+                        cx,
+                    );
+                }
+            }),
+        );
+        let network_caret = network_caret.on_click(
+            cx.listener(|app, _evt, _win, cx| {
+                app.nav.show_network_dropdown = !app.nav.show_network_dropdown;
+                app.nav.show_repo_selector = false;
+                app.nav.show_branch_selector = false;
+                cx.notify();
+            }),
+        );
+
+        let mut network_dropdown = div();
+        if self.nav.show_network_dropdown {
+            network_dropdown = self.render_network_dropdown(cx);
+        }
+
+        let right = h_flex()
+            .w_full()
+            .h(px(theme::TOOLBAR_HEIGHT))
+            .flex_shrink_0()
+            .bg(theme::toolbar_bg())
+            .border_b_1()
+            .border_color(theme::toolbar_button_border())
             .child(branch_section)
             .child(toolbar::vertical_divider())
-            .child(network_section)
+            .child(
+                div()
+                    .flex_1()
+                    .h_full()
+                    .relative()
+                    .child(
+                        h_flex()
+                            .size_full()
+                            .child(network_main)
+                            .child(network_caret),
+                    )
+                    .child(network_dropdown),
+            );
+
+        (left, right)
     }
 
     // ------------------------------------------------------------------
@@ -1824,6 +1934,74 @@ impl GitSparkApp {
     // Repo selector overlay
     // ------------------------------------------------------------------
 
+    fn render_network_dropdown(&self, cx: &mut Context<Self>) -> Div {
+        let snapshot = self.repo.snapshot.as_ref();
+        let remote_name = snapshot
+            .and_then(|s| s.repo.remote_name.as_deref())
+            .unwrap_or("origin");
+
+        let actions: Vec<(NetworkAction, IconName, String)> = vec![
+            (NetworkAction::Fetch, IconName::Loader, format!("Fetch {remote_name}")),
+            (NetworkAction::Pull, IconName::ArrowDown, format!("Pull {remote_name}")),
+            (NetworkAction::Push, IconName::ArrowUp, format!("Push {remote_name}")),
+        ];
+
+        let mut dropdown = v_flex()
+            .absolute()
+            .top(px(theme::TOOLBAR_HEIGHT))
+            .right_0()
+            .w(px(220.0))
+            .bg(theme::panel_bg())
+            .border_1()
+            .border_color(theme::toolbar_button_border())
+            .rounded_b(px(theme::CORNER_RADIUS))
+            .shadow_lg();
+
+        for (action, icon, label) in actions {
+            let is_current = snapshot
+                .map(|s| NetworkAction::from_snapshot(s) == action)
+                .unwrap_or(action == NetworkAction::Fetch);
+
+            dropdown = dropdown.child(
+                h_flex()
+                    .id(SharedString::from(format!("net-{label}")))
+                    .w_full()
+                    .h(px(36.0))
+                    .px(px(10.0))
+                    .items_center()
+                    .gap(px(8.0))
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme::hover_bg()))
+                    .bg(if is_current {
+                        theme::hover_bg()
+                    } else {
+                        gpui::transparent_black()
+                    })
+                    .child(
+                        Icon::new(icon)
+                            .size(px(14.0))
+                            .text_color(theme::text_main()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(theme::FONT_SIZE))
+                            .text_color(theme::text_main())
+                            .child(label),
+                    )
+                    .on_click(cx.listener(move |app, _evt, _win, cx| {
+                        app.nav.show_network_dropdown = false;
+                        app.handle_toolbar_action(
+                            ToolbarAction::RunNetworkAction(action),
+                            cx,
+                        );
+                    })),
+            );
+        }
+
+        dropdown
+    }
+
     fn render_repo_selector_panel(&self, cx: &mut Context<Self>) -> Div {
         let recent_repos = self.settings.recent_repos.clone();
         let current_repo = self
@@ -2081,6 +2259,39 @@ impl GitSparkApp {
     // Branch selector (full-width panel)
     // ------------------------------------------------------------------
 
+    fn render_branch_selector_overlay(&self, cx: &mut Context<Self>) -> Div {
+        // Backdrop — starts below toolbar so toolbar clicks still work
+        let backdrop = div()
+            .id("branch-selector-backdrop")
+            .absolute()
+            .top(px(theme::TOOLBAR_HEIGHT))
+            .left_0()
+            .w_full()
+            .bottom_0()
+            .on_click(cx.listener(|app, _evt, _win, cx| {
+                app.nav.show_branch_selector = false;
+                cx.notify();
+            }));
+
+        // Panel drops down from the toolbar, left-aligned within the right column
+        let panel = self
+            .render_branch_selector_panel(cx)
+            .absolute()
+            .top(px(theme::TOOLBAR_HEIGHT))
+            .left_0()
+            .w(px(300.0))
+            .bottom_0()
+            .shadow_lg();
+
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(backdrop)
+            .child(panel)
+    }
+
     fn render_branch_selector_panel(&self, cx: &mut Context<Self>) -> Div {
         let snapshot = self.repo.snapshot.as_ref();
         let current_branch = snapshot
@@ -2240,6 +2451,10 @@ impl GitSparkApp {
                     .border_color(theme::surface_bg_alt())
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::toolbar_hover_bg()))
+                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                        // TODO: open a create-branch dialog; for now use branch_target
+                        app.create_branch(cx);
+                    }))
                     .child(
                         div()
                             .text_size(px(theme::FONT_SIZE))

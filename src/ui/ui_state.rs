@@ -31,6 +31,7 @@ pub struct NavState {
     pub show_settings: bool,
     pub show_repo_selector: bool,
     pub show_branch_selector: bool,
+    pub show_network_dropdown: bool,
     pub settings_section: SettingsSection,
 }
 
@@ -42,6 +43,7 @@ impl Default for NavState {
             show_settings: false,
             show_repo_selector: false,
             show_branch_selector: false,
+            show_network_dropdown: false,
             settings_section: SettingsSection::Git,
         }
     }
