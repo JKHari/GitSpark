@@ -201,3 +201,8 @@ A UI change is not done unless:
 - geometry comes from tokens or helpers
 - lists use `uniform_list` for virtualization
 - `src/ui/app.rs` is simpler, not more crowded
+
+
+## Guidelines
+
+- Do not change existing comments, remove them only if its irrelavent

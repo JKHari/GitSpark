@@ -336,7 +336,7 @@ fn render_diff_line(line: &DiffLine) -> Div {
         .h(px(theme::DIFF_ROW_HEIGHT))
         .flex_shrink_0()
         .font_family("monospace")
-        .text_size(px(11.0));
+        .text_size(px(12.0));
 
     // Old line number gutter
     row = row.child(
