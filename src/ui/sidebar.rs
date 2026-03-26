@@ -5,6 +5,7 @@ use gpui_component::{Icon, IconName, Sizable, h_flex, v_flex};
 
 use crate::models::{ChangeEntry, CommitInfo};
 use crate::ui::app::GitSparkApp;
+use crate::ui::changes_context_menu;
 use crate::ui::history_context_menu;
 use crate::ui::theme;
 use crate::ui::theme::z;
@@ -85,8 +86,43 @@ pub fn render_sidebar_interactive(
             if changes.is_empty() {
                 div().flex_1().child(render_empty_state("No changed files")).into_any_element()
             } else {
+                let file_count = changes.len();
+                let include_all = app.commit.include_all;
+
+                // Include-all header: checkbox + "N changed files"
+                let include_header = h_flex()
+                    .w_full()
+                    .h(z(28.0))
+                    .px(z(10.0))
+                    .items_center()
+                    .gap(z(5.0))
+                    .bg(theme::surface_bg())
+                    .border_b_1()
+                    .border_color(theme::border())
+                    .flex_shrink_0()
+                    .child({
+                        let vh = view.clone();
+                        render_checkbox(include_all)
+                            .id("include-all-checkbox")
+                            .cursor_pointer()
+                            .on_click(move |_evt, _win, cx| {
+                                vh.update(cx, |app, cx| {
+                                    app.commit.include_all = !app.commit.include_all;
+                                    cx.notify();
+                                });
+                            })
+                    })
+                    .child(
+                        div()
+                            .text_size(z(11.0))
+                            .text_color(theme::text_muted())
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(format!("{file_count} changed files")),
+                    );
+
                 let changes_snapshot: Vec<ChangeEntry> = changes.to_vec();
                 let sel = selected_change.clone();
+                v_flex().flex_1().min_h_0().child(include_header).child(
                 div().id("changes-scroll").flex_1().min_h_0().overflow_y_scrollbar().child(
                     uniform_list("changes-list", changes_snapshot.len(), {
                         let view = view.clone();
@@ -96,25 +132,31 @@ pub fn render_sidebar_interactive(
                                     let change = &changes_snapshot[ix];
                                     let is_selected = sel.as_deref() == Some(change.path.as_str());
                                     let path = change.path.clone();
-                                    let vh = view.clone();
-                                    render_change_row(change, is_selected)
-                                        .id(SharedString::from(format!("change-{}", change.path)))
-                                        .cursor_pointer()
-                                        .hover(|s| s.bg(theme::hover_bg()))
-                                        .on_click(move |_evt, _win, cx| {
-                                            let path = path.clone();
-                                            vh.update(cx, |app, cx| {
-                                                app.selection.selected_change = Some(path);
-                                                cx.notify();
-                                            });
-                                        })
-                                        .into_any_element()
+                                    let click_view = view.clone();
+                                    let ctx_path = change.path.clone();
+                                    changes_context_menu::bind_changes_context_click(
+                                        render_change_row(change, is_selected)
+                                            .id(SharedString::from(format!("change-{}", change.path)))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(theme::hover_bg()))
+                                            .on_click(move |_evt, _win, cx| {
+                                                let path = path.clone();
+                                                click_view.update(cx, |app, cx| {
+                                                    app.selection.selected_change = Some(path);
+                                                    cx.notify();
+                                                });
+                                            }),
+                                        view.clone(),
+                                        ctx_path,
+                                    )
+                                    .into_any_element()
                                 })
                                 .collect()
                         }
                     })
                     .flex_1()
                     .with_sizing_behavior(ListSizingBehavior::Infer),
+                ).into_any_element()
                 ).into_any_element()
             }
         }

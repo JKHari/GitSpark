@@ -55,6 +55,7 @@ pub(crate) fn default_settings_field(section: SettingsSection) -> SettingsField 
     match section {
         SettingsSection::Git => SettingsField::GitUserName,
         SettingsSection::Ai => SettingsField::AiModel,
+        SettingsSection::Appearance | SettingsSection::Integrations => SettingsField::GitUserName,
     }
 }
 
@@ -92,6 +93,7 @@ pub(crate) fn render_settings_modal(
                 }))
                 .into_any_element(),
         ),
+        SettingsSection::Appearance | SettingsSection::Integrations => None,
     };
 
     let content = match app.nav.settings_section {
@@ -99,6 +101,52 @@ pub(crate) fn render_settings_modal(
             render_git_section(app, window, repo_scope.as_deref(), cx).into_any_element()
         }
         SettingsSection::Ai => render_ai_section(app, window, cx).into_any_element(),
+        SettingsSection::Appearance => {
+            v_flex()
+                .flex_1()
+                .p(px(20.0))
+                .gap(px(16.0))
+                .child(
+                    div()
+                        .text_size(px(16.0))
+                        .text_color(theme::text_main())
+                        .font_weight(FontWeight::BOLD)
+                        .child("Appearance"),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme::text_muted())
+                        .child("Theme: Dark (GitHub)"),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme::text_muted())
+                        .child("Additional themes coming soon."),
+                )
+                .into_any_element()
+        }
+        SettingsSection::Integrations => {
+            v_flex()
+                .flex_1()
+                .p(px(20.0))
+                .gap(px(16.0))
+                .child(
+                    div()
+                        .text_size(px(16.0))
+                        .text_color(theme::text_main())
+                        .font_weight(FontWeight::BOLD)
+                        .child("Integrations"),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.0))
+                        .text_color(theme::text_muted())
+                        .child("External editor and shell preferences coming soon."),
+                )
+                .into_any_element()
+        }
     };
 
     let panel = v_flex()
@@ -250,6 +298,22 @@ fn render_nav(app: &GitSparkApp, cx: &mut Context<GitSparkApp>) -> impl IntoElem
             "Provider, model, and prompt",
             app.nav.settings_section == SettingsSection::Ai,
             SettingsSection::Ai,
+            cx,
+        ))
+        .child(render_nav_radio(
+            "settings-nav-appearance",
+            "Appearance",
+            "Theme and visual preferences",
+            app.nav.settings_section == SettingsSection::Appearance,
+            SettingsSection::Appearance,
+            cx,
+        ))
+        .child(render_nav_radio(
+            "settings-nav-integrations",
+            "Integrations",
+            "External editor and shell",
+            app.nav.settings_section == SettingsSection::Integrations,
+            SettingsSection::Integrations,
             cx,
         ))
 }

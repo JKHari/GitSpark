@@ -22,10 +22,14 @@ use crate::storage::{push_recent_repo, save_settings};
 use crate::ui::domain_state::{
     CommitState, NetworkAction, NetworkState, RepoState, SelectionState,
 };
+use crate::ui::branch_context_menu::BranchContextAction;
+use crate::ui::changes_context_menu::ChangesContextAction;
 use crate::ui::history_context_menu::HistoryContextMenuAction;
 use crate::ui::settings_modal::{self, SettingsField, SettingsModalState};
 use crate::ui::theme;
-use crate::ui::ui_state::{FilterState, MessageState, NavState, OpenRouterModelsState, SidebarTab};
+use crate::ui::ui_state::{
+    ActiveDialog, FilterState, MessageState, NavState, OpenRouterModelsState, SidebarTab,
+};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -149,6 +153,11 @@ pub struct GitSparkApp {
     description_focus: FocusHandle,
     summary_cursor: usize,
     description_cursor: usize,
+    // Filter input state
+    branch_filter_focus: FocusHandle,
+    branch_filter_cursor: usize,
+    repo_filter_focus: FocusHandle,
+    repo_filter_cursor: usize,
     pub(crate) settings_modal: SettingsModalState,
     // Zoom
     rem_size: f32,
@@ -183,6 +192,10 @@ impl GitSparkApp {
             description_focus: cx.focus_handle(),
             summary_cursor: 0,
             description_cursor: 0,
+            branch_filter_focus: cx.focus_handle(),
+            branch_filter_cursor: 0,
+            repo_filter_focus: cx.focus_handle(),
+            repo_filter_cursor: 0,
             settings_modal: SettingsModalState::new(cx),
             rem_size: DEFAULT_REM_SIZE,
         };
@@ -190,8 +203,12 @@ impl GitSparkApp {
         // Register zoom actions at the window level so they work regardless of focus
         cx.observe_keystrokes(|app, keystroke, _window, cx| {
             let ks = &keystroke.keystroke;
-            if ks.modifiers.secondary() && !ks.modifiers.shift {
+            let cmd = ks.modifiers.secondary();
+            let shift = ks.modifiers.shift;
+
+            if cmd && !shift {
                 match ks.key.as_str() {
+                    // Zoom
                     "=" | "+" => {
                         app.rem_size = (app.rem_size + ZOOM_STEP).min(ZOOM_MAX);
                         let pct = ((app.rem_size / DEFAULT_REM_SIZE) * 100.0).round() as i32;
@@ -207,6 +224,38 @@ impl GitSparkApp {
                     "0" => {
                         app.rem_size = DEFAULT_REM_SIZE;
                         app.messages.status_message = "Zoom: 100%".to_string();
+                        cx.notify();
+                    }
+                    // Cmd+1 = Changes tab, Cmd+2 = History tab
+                    "1" => {
+                        app.nav.sidebar_tab = SidebarTab::Changes;
+                        cx.notify();
+                    }
+                    "2" => {
+                        app.nav.sidebar_tab = SidebarTab::History;
+                        cx.notify();
+                    }
+                    // Cmd+, = Settings
+                    "," => {
+                        app.nav.show_settings = !app.nav.show_settings;
+                        cx.notify();
+                    }
+                    // Cmd+Enter = Commit
+                    "enter" => {
+                        if app.nav.active_dialog == ActiveDialog::None
+                            && !app.nav.show_settings
+                            && !app.commit.summary.trim().is_empty()
+                        {
+                            app.commit_all(cx);
+                        }
+                    }
+                    _ => {}
+                }
+            } else if cmd && shift {
+                match ks.key.as_str() {
+                    // Cmd+Shift+N = New Branch
+                    "n" => {
+                        app.nav.active_dialog = ActiveDialog::CreateBranch;
                         cx.notify();
                     }
                     _ => {}
@@ -306,6 +355,7 @@ impl GitSparkApp {
                     self.messages.error_message = format!("Merge failed: {err}");
                 }
                 AppEvent::CommitCreated(Ok(snapshot)) => {
+                    let summary = self.commit.summary.clone();
                     self.adopt_snapshot(snapshot);
                     self.commit.summary.clear();
                     self.commit.body.clear();
@@ -314,6 +364,9 @@ impl GitSparkApp {
                     self.commit.ai_preview = None;
                     self.messages.status_message = "Commit created.".to_string();
                     self.messages.error_message.clear();
+                    // Undo commit banner
+                    self.nav.undo_commit =
+                        Some((summary, std::time::Instant::now()));
                 }
                 AppEvent::CommitCreated(Err(err)) => {
                     self.messages.error_message = format!("Commit failed: {err}");
@@ -718,9 +771,15 @@ impl GitSparkApp {
             return;
         };
 
-        let name = self.repo.new_branch_name.trim().to_string();
+        // Use filter text as branch name if new_branch_name is empty
+        let name = if self.repo.new_branch_name.trim().is_empty() {
+            self.filters.branch_filter_text.trim().to_string()
+        } else {
+            self.repo.new_branch_name.trim().to_string()
+        };
         if name.is_empty() {
-            self.messages.error_message = "Branch name cannot be empty.".to_string();
+            self.messages.error_message = "Type a branch name in the filter field, then click New Branch.".to_string();
+            cx.notify();
             return;
         }
 
@@ -733,6 +792,8 @@ impl GitSparkApp {
             tx.send(AppEvent::BranchSwitched(res, name));
         });
         self.repo.new_branch_name.clear();
+        self.filters.branch_filter_text.clear();
+        self.branch_filter_cursor = 0;
         self.nav.show_branch_selector = false;
         cx.notify();
     }
@@ -792,6 +853,21 @@ impl GitSparkApp {
         thread::spawn(move || {
             let res = git.commit_all(&path, &message).map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::CommitCreated(res));
+        });
+        cx.notify();
+    }
+
+    fn undo_last_commit(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.repo_path().map(PathBuf::from) else {
+            return;
+        };
+        self.nav.undo_commit = None;
+        self.messages.status_message = "Undoing last commit...".to_string();
+        let tx = self.event_tx.clone();
+        let git = GitClient::new();
+        thread::spawn(move || {
+            let res = git.undo_last_commit(&path).map_err(|e| e.to_string());
+            tx.send(AppEvent::CommitCreated(res));
         });
         cx.notify();
     }
@@ -978,6 +1054,89 @@ impl GitSparkApp {
             | HistoryContextMenuAction::CopyTag => {}
         }
 
+        cx.notify();
+    }
+
+    pub(crate) fn handle_changes_context_action(
+        &mut self,
+        path: String,
+        action: ChangesContextAction,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            ChangesContextAction::DiscardChanges => {
+                self.discard_change(&path);
+            }
+            ChangesContextAction::IgnoreFile => {
+                self.ignore_path(&path);
+            }
+            ChangesContextAction::IgnoreExtension => {
+                if let Some(ext) = std::path::Path::new(&path)
+                    .extension()
+                    .map(|e| e.to_string_lossy().to_string())
+                {
+                    self.ignore_extension(&ext);
+                }
+            }
+            ChangesContextAction::CopyFilePath => {
+                if let Some(repo_path) = self.repo_path() {
+                    let full = format!("{}/{}", repo_path.display(), path);
+                    cx.write_to_clipboard(ClipboardItem::new_string(full));
+                    self.messages.status_message = "Copied file path.".to_string();
+                }
+            }
+            ChangesContextAction::CopyRelativePath => {
+                cx.write_to_clipboard(ClipboardItem::new_string(path.clone()));
+                self.messages.status_message = "Copied relative path.".to_string();
+            }
+            ChangesContextAction::RevealInFinder => {
+                self.reveal_in_finder(&path);
+            }
+            ChangesContextAction::OpenInExternalEditor => {
+                self.open_in_external_editor(&path);
+            }
+        }
+        self.messages.error_message.clear();
+        cx.notify();
+    }
+
+    pub(crate) fn handle_branch_context_action(
+        &mut self,
+        branch_name: String,
+        action: BranchContextAction,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            BranchContextAction::Delete => {
+                let Some(path) = self.repo_path().map(PathBuf::from) else { return };
+                self.messages.status_message = format!("Deleting branch '{branch_name}'...");
+                self.messages.error_message.clear();
+                let tx = self.event_tx.clone();
+                let git = GitClient::new();
+                let name = branch_name.clone();
+                thread::spawn(move || {
+                    let res = git.delete_branch(&path, &name).map_err(|e| e.to_string());
+                    tx.send(AppEvent::NetworkActionCompleted(
+                        res,
+                        format!("Deleted branch '{name}'"),
+                    ));
+                });
+            }
+            BranchContextAction::ViewOnGitHub => {
+                if let Some(snapshot) = &self.repo.snapshot {
+                    if let Some(remote) = &snapshot.repo.remote_name {
+                        // Try to construct GitHub URL
+                        let repo_name = &snapshot.repo.name;
+                        let url = format!("https://github.com/{repo_name}/tree/{branch_name}");
+                        let _ = open::that_detached(&url);
+                    }
+                }
+            }
+            BranchContextAction::Rename => {
+                // Not yet implemented
+                self.messages.status_message = "Branch rename not yet implemented.".to_string();
+            }
+        }
         cx.notify();
     }
 
@@ -1334,6 +1493,12 @@ impl Render for GitSparkApp {
 
         let summary_focused = self.summary_focus.is_focused(window);
         let description_focused = self.description_focus.is_focused(window);
+        let branch_filter_focused = self.branch_filter_focus.is_focused(window);
+        let repo_filter_focused = self.repo_filter_focus.is_focused(window);
+
+        // Clamp filter cursors
+        self.branch_filter_cursor = self.branch_filter_cursor.min(self.filters.branch_filter_text.len());
+        self.repo_filter_cursor = self.repo_filter_cursor.min(self.filters.repo_filter_text.len());
 
         // Build toolbar parts separately — they go into the resizable columns
         let (toolbar_left, toolbar_right) = self.render_toolbar_parts(cx);
@@ -1362,7 +1527,7 @@ impl Render for GitSparkApp {
                     .child(self.render_workspace(cx)),
             )
             .children(if self.nav.show_branch_selector {
-                Some(self.render_branch_selector_overlay(cx))
+                Some(self.render_branch_selector_overlay(branch_filter_focused, cx))
             } else {
                 None
             });
@@ -1402,6 +1567,11 @@ impl Render for GitSparkApp {
 
         if self.nav.show_settings {
             root = root.child(settings_modal::render_settings_modal(self, window, cx));
+        }
+
+        // Dialogs
+        if self.nav.active_dialog != ActiveDialog::None {
+            root = root.child(self.render_active_dialog(cx));
         }
 
         root
@@ -1553,6 +1723,58 @@ impl GitSparkApp {
 
         // Commit form with interactive handlers (only on Changes tab)
         if sidebar_tab == SidebarTab::Changes {
+            // Undo commit banner (auto-dismiss after 15 seconds)
+            if let Some((ref summary, created_at)) = self.nav.undo_commit {
+                let elapsed = created_at.elapsed().as_secs();
+                if elapsed < 15 {
+                    let summary_text = if summary.len() > 30 {
+                        format!("{}...", &summary[..27])
+                    } else {
+                        summary.clone()
+                    };
+                    sidebar = sidebar.child(
+                        h_flex()
+                            .w_full()
+                            .h(theme::z(32.0))
+                            .px(theme::z(10.0))
+                            .items_center()
+                            .gap(theme::z(6.0))
+                            .bg(theme::surface_bg())
+                            .border_t_1()
+                            .border_color(theme::border())
+                            .flex_shrink_0()
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_size(theme::z(11.0))
+                                    .text_color(theme::text_muted())
+                                    .overflow_x_hidden()
+                                    .whitespace_nowrap()
+                                    .child(format!("\u{201C}{summary_text}\u{201D}")),
+                            )
+                            .child(
+                                div()
+                                    .id("undo-commit-btn")
+                                    .px(theme::z(8.0))
+                                    .py(theme::z(2.0))
+                                    .rounded(theme::z(4.0))
+                                    .bg(theme::accent())
+                                    .text_size(theme::z(11.0))
+                                    .text_color(gpui::white())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::commit_button_hover_bg()))
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        app.undo_last_commit(cx);
+                                    }))
+                                    .child("Undo"),
+                            ),
+                    );
+                } else {
+                    // Auto-dismiss
+                    // (Can't mutate here in render, but it'll clear on next event)
+                }
+            }
+
             let branch_name = self
                 .repo
                 .snapshot
@@ -1725,6 +1947,128 @@ impl GitSparkApp {
                     if !ks.modifiers.control {
                         self.commit.body.insert_str(self.description_cursor, ch);
                         self.description_cursor += ch.len();
+                        cx.notify();
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Filter input key handling
+    // ------------------------------------------------------------------
+
+    fn handle_branch_filter_key(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ks = &event.keystroke;
+        if ks.modifiers.secondary() {
+            if ks.key.as_str() == "v" {
+                if let Some(item) = cx.read_from_clipboard() {
+                    if let Some(text) = item.text() {
+                        let text = text.replace('\n', "");
+                        self.filters.branch_filter_text.insert_str(self.branch_filter_cursor, &text);
+                        self.branch_filter_cursor += text.len();
+                        cx.notify();
+                    }
+                }
+            }
+            return;
+        }
+        match ks.key.as_str() {
+            "backspace" => {
+                if self.branch_filter_cursor > 0 {
+                    let new_pos = prev_char_boundary(&self.filters.branch_filter_text, self.branch_filter_cursor);
+                    self.filters.branch_filter_text.drain(new_pos..self.branch_filter_cursor);
+                    self.branch_filter_cursor = new_pos;
+                    cx.notify();
+                }
+            }
+            "escape" => {
+                self.nav.show_branch_selector = false;
+                self.filters.branch_filter_text.clear();
+                self.branch_filter_cursor = 0;
+                cx.notify();
+            }
+            "left" => {
+                if self.branch_filter_cursor > 0 {
+                    self.branch_filter_cursor = prev_char_boundary(&self.filters.branch_filter_text, self.branch_filter_cursor);
+                    cx.notify();
+                }
+            }
+            "right" => {
+                if self.branch_filter_cursor < self.filters.branch_filter_text.len() {
+                    self.branch_filter_cursor = next_char_boundary(&self.filters.branch_filter_text, self.branch_filter_cursor);
+                    cx.notify();
+                }
+            }
+            _ => {
+                if let Some(ref ch) = ks.key_char {
+                    if !ks.modifiers.control && !ch.contains('\n') && !ch.contains('\r') {
+                        self.filters.branch_filter_text.insert_str(self.branch_filter_cursor, ch);
+                        self.branch_filter_cursor += ch.len();
+                        cx.notify();
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_repo_filter_key(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ks = &event.keystroke;
+        if ks.modifiers.secondary() {
+            if ks.key.as_str() == "v" {
+                if let Some(item) = cx.read_from_clipboard() {
+                    if let Some(text) = item.text() {
+                        let text = text.replace('\n', "");
+                        self.filters.repo_filter_text.insert_str(self.repo_filter_cursor, &text);
+                        self.repo_filter_cursor += text.len();
+                        cx.notify();
+                    }
+                }
+            }
+            return;
+        }
+        match ks.key.as_str() {
+            "backspace" => {
+                if self.repo_filter_cursor > 0 {
+                    let new_pos = prev_char_boundary(&self.filters.repo_filter_text, self.repo_filter_cursor);
+                    self.filters.repo_filter_text.drain(new_pos..self.repo_filter_cursor);
+                    self.repo_filter_cursor = new_pos;
+                    cx.notify();
+                }
+            }
+            "escape" => {
+                self.nav.show_repo_selector = false;
+                self.filters.repo_filter_text.clear();
+                self.repo_filter_cursor = 0;
+                cx.notify();
+            }
+            "left" => {
+                if self.repo_filter_cursor > 0 {
+                    self.repo_filter_cursor = prev_char_boundary(&self.filters.repo_filter_text, self.repo_filter_cursor);
+                    cx.notify();
+                }
+            }
+            "right" => {
+                if self.repo_filter_cursor < self.filters.repo_filter_text.len() {
+                    self.repo_filter_cursor = next_char_boundary(&self.filters.repo_filter_text, self.repo_filter_cursor);
+                    cx.notify();
+                }
+            }
+            _ => {
+                if let Some(ref ch) = ks.key_char {
+                    if !ks.modifiers.control && !ch.contains('\n') && !ch.contains('\r') {
+                        self.filters.repo_filter_text.insert_str(self.repo_filter_cursor, ch);
+                        self.repo_filter_cursor += ch.len();
                         cx.notify();
                     }
                 }
@@ -2133,11 +2477,36 @@ impl GitSparkApp {
             )
             .child(settings_button);
 
+        // Auto-placeholder: "Update filename" for single file, else generic
+        let summary_placeholder = if self.commit.summary.is_empty() {
+            if let Some(snapshot) = &self.repo.snapshot {
+                if snapshot.changes.len() == 1 {
+                    let path = &snapshot.changes[0].path;
+                    let filename = path.rsplit('/').next().unwrap_or(path);
+                    let status = &snapshot.changes[0].status;
+                    let verb = if status.contains('?') || status.contains('A') {
+                        "Create"
+                    } else if status.contains('D') {
+                        "Delete"
+                    } else {
+                        "Update"
+                    };
+                    format!("{verb} {filename}")
+                } else {
+                    "Summary (required)".to_string()
+                }
+            } else {
+                "Summary (required)".to_string()
+            }
+        } else {
+            "Summary (required)".to_string()
+        };
+
         // Summary field — editable single-line input
         let summary_field = self.render_text_field(
             "commit-summary-field",
             &self.commit.summary,
-            "Summary (required)",
+            &summary_placeholder,
             self.summary_cursor,
             summary_focused,
             false,
@@ -2357,15 +2726,222 @@ impl GitSparkApp {
     // ------------------------------------------------------------------
 
     fn render_status_bar(&self) -> impl IntoElement {
+        let branch = self
+            .repo
+            .snapshot
+            .as_ref()
+            .map(|s| s.repo.current_branch.as_str());
+        let change_count = self
+            .repo
+            .snapshot
+            .as_ref()
+            .map(|s| s.changes.len())
+            .unwrap_or(0);
         crate::ui::status_bar::render_status_bar(
             &self.messages.status_message,
             &self.messages.error_message,
+            branch,
+            change_count,
         )
     }
 
     // ------------------------------------------------------------------
     // Repo selector overlay
     // ------------------------------------------------------------------
+
+    fn render_active_dialog(&self, cx: &mut Context<Self>) -> Div {
+        // Backdrop
+        let backdrop = div()
+            .id("dialog-backdrop")
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(gpui::hsla(0.0, 0.0, 0.0, 0.5))
+            .on_click(cx.listener(|app, _evt, _win, cx| {
+                app.nav.active_dialog = ActiveDialog::None;
+                cx.notify();
+            }));
+
+        let dialog_content = match &self.nav.active_dialog {
+            ActiveDialog::CreateBranch => {
+                let branch_name = &self.repo.new_branch_name;
+                let current = self
+                    .repo
+                    .snapshot
+                    .as_ref()
+                    .map(|s| s.repo.current_branch.as_str())
+                    .unwrap_or("main");
+
+                v_flex()
+                    .w(px(400.0))
+                    .bg(theme::panel_bg())
+                    .rounded(theme::z(theme::CORNER_RADIUS))
+                    .border_1()
+                    .border_color(theme::border())
+                    .shadow_lg()
+                    // Header
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(theme::z(16.0))
+                            .py(theme::z(12.0))
+                            .items_center()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(theme::border())
+                            .child(
+                                div()
+                                    .text_size(theme::z(14.0))
+                                    .text_color(theme::text_main())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Create a Branch"),
+                            )
+                            .child(
+                                div()
+                                    .id("dialog-close")
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::hover_bg()))
+                                    .rounded(px(4.0))
+                                    .p(px(4.0))
+                                    .child(
+                                        Icon::new(IconName::Close)
+                                            .size(px(14.0))
+                                            .text_color(theme::text_muted()),
+                                    )
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    // Body
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .p(theme::z(16.0))
+                            .gap(theme::z(12.0))
+                            // Name field
+                            .child(
+                                v_flex()
+                                    .gap(theme::z(4.0))
+                                    .child(
+                                        div()
+                                            .text_size(theme::z(12.0))
+                                            .text_color(theme::text_muted())
+                                            .child("Name"),
+                                    )
+                                    .child(
+                                        div()
+                                            .w_full()
+                                            .h(theme::z(28.0))
+                                            .px(theme::z(8.0))
+                                            .items_center()
+                                            .rounded(theme::z(theme::CORNER_RADIUS))
+                                            .bg(theme::bg())
+                                            .border_1()
+                                            .border_color(theme::accent())
+                                            .child(
+                                                div()
+                                                    .text_size(theme::z(12.0))
+                                                    .text_color(if branch_name.is_empty() {
+                                                        theme::text_muted()
+                                                    } else {
+                                                        theme::text_main()
+                                                    })
+                                                    .child(if branch_name.is_empty() {
+                                                        "branch-name".to_string()
+                                                    } else {
+                                                        branch_name.clone()
+                                                    }),
+                                            ),
+                                    ),
+                            )
+                            // Starting point
+                            .child(
+                                div()
+                                    .text_size(theme::z(11.0))
+                                    .text_color(theme::text_muted())
+                                    .child(format!("Based on current branch: {current}")),
+                            ),
+                    )
+                    // Footer
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(theme::z(16.0))
+                            .py(theme::z(12.0))
+                            .justify_end()
+                            .gap(theme::z(8.0))
+                            .border_t_1()
+                            .border_color(theme::border())
+                            .child(
+                                div()
+                                    .id("dialog-cancel")
+                                    .px(theme::z(12.0))
+                                    .py(theme::z(6.0))
+                                    .rounded(theme::z(theme::CORNER_RADIUS))
+                                    .bg(theme::surface_bg())
+                                    .border_1()
+                                    .border_color(theme::surface_bg_alt())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::toolbar_hover_bg()))
+                                    .child(
+                                        div()
+                                            .text_size(theme::z(12.0))
+                                            .text_color(theme::text_main())
+                                            .child("Cancel"),
+                                    )
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("dialog-create-branch")
+                                    .px(theme::z(12.0))
+                                    .py(theme::z(6.0))
+                                    .rounded(theme::z(theme::CORNER_RADIUS))
+                                    .bg(theme::commit_button_bg())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::commit_button_hover_bg()))
+                                    .child(
+                                        div()
+                                            .text_size(theme::z(12.0))
+                                            .text_color(theme::commit_button_text())
+                                            .child("Create Branch"),
+                                    )
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        app.create_branch(cx);
+                                    })),
+                            ),
+                    )
+            }
+            _ => div(),
+        };
+
+        // Center the dialog
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .child(backdrop)
+            .child(
+                div()
+                    .id("dialog-container")
+                    .on_click(|_evt, _win, cx| cx.stop_propagation())
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .items_center()
+                    .justify_center()
+                    .child(dialog_content),
+            )
+    }
 
     fn render_network_dropdown(&self, cx: &mut Context<Self>) -> Div {
         let snapshot = self.repo.snapshot.as_ref();
@@ -2578,7 +3154,18 @@ impl GitSparkApp {
             );
 
         // --- Repo list ---
-        let repos_snapshot = recent_repos.clone();
+        // Filter repos by search text
+        let repo_filter = self.filters.repo_filter_text.to_lowercase();
+        let repos_snapshot: Vec<_> = recent_repos
+            .iter()
+            .filter(|p| {
+                repo_filter.is_empty()
+                    || p.file_name()
+                        .map(|n| n.to_string_lossy().to_lowercase().contains(&repo_filter))
+                        .unwrap_or(false)
+            })
+            .cloned()
+            .collect();
         let repo_list = if repos_snapshot.is_empty() {
             div().flex_1().child(
                 div()
@@ -2692,7 +3279,7 @@ impl GitSparkApp {
     // Branch selector (full-width panel)
     // ------------------------------------------------------------------
 
-    fn render_branch_selector_overlay(&self, cx: &mut Context<Self>) -> Div {
+    fn render_branch_selector_overlay(&self, branch_filter_focused: bool, cx: &mut Context<Self>) -> Div {
         // Backdrop — starts below toolbar so toolbar clicks still work
         let backdrop = div()
             .id("branch-selector-backdrop")
@@ -2707,8 +3294,11 @@ impl GitSparkApp {
             }));
 
         // Panel drops down from the toolbar, left-aligned within the right column
+        // The id + on_click stops propagation so clicks inside don't hit the backdrop
         let panel = self
-            .render_branch_selector_panel(cx)
+            .render_branch_selector_panel(branch_filter_focused, cx)
+            .id("branch-selector-panel")
+            .on_click(|_evt, _win, cx| cx.stop_propagation())
             .absolute()
             .top(theme::z(theme::TOOLBAR_HEIGHT))
             .left_0()
@@ -2725,15 +3315,20 @@ impl GitSparkApp {
             .child(panel)
     }
 
-    fn render_branch_selector_panel(&self, cx: &mut Context<Self>) -> Div {
+    fn render_branch_selector_panel(&self, branch_filter_focused: bool, cx: &mut Context<Self>) -> Div {
         let snapshot = self.repo.snapshot.as_ref();
         let current_branch = snapshot
             .map(|s| s.repo.current_branch.clone())
             .unwrap_or_else(|| "main".to_string());
         let branches: Vec<BranchInfo> = snapshot.map(|s| s.branches.clone()).unwrap_or_default();
 
-        // Separate local branches only (skip remotes)
-        let local_branches: Vec<&BranchInfo> = branches.iter().filter(|b| !b.is_remote).collect();
+        // Separate local branches, filtered by search text
+        let filter = self.filters.branch_filter_text.to_lowercase();
+        let local_branches: Vec<&BranchInfo> = branches
+            .iter()
+            .filter(|b| !b.is_remote)
+            .filter(|b| filter.is_empty() || b.name.to_lowercase().contains(&filter))
+            .collect();
 
         // Find default branch (current one)
         let default_branch = local_branches
@@ -2805,13 +3400,15 @@ impl GitSparkApp {
             .border_b_1()
             .border_color(theme::toolbar_button_border())
             .child(
-                div()
+                h_flex()
                     .flex_1()
                     .h(px(34.0))
                     .items_center()
                     .justify_center()
+                    .cursor_pointer()
                     .border_b_2()
                     .border_color(theme::accent())
+                    .hover(|s| s.bg(theme::hover_bg()))
                     .child(
                         div()
                             .text_size(theme::z(theme::FONT_SIZE))
@@ -2820,19 +3417,7 @@ impl GitSparkApp {
                             .child("Branches"),
                     ),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .h(px(34.0))
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        div()
-                            .text_size(theme::z(theme::FONT_SIZE))
-                            .text_color(theme::text_muted())
-                            .child("Pull Requests"),
-                    ),
-            );
+            ;
 
         // --- Filter bar ---
         let filter_bar = h_flex()
@@ -2842,8 +3427,40 @@ impl GitSparkApp {
             .py(px(10.0))
             .gap(px(8.0))
             .items_center()
-            .child(
+            .child({
+                let filter_text = &self.filters.branch_filter_text;
+                let cursor = self.branch_filter_cursor;
+                let focused = branch_filter_focused;
+
+                let border_color = if focused { theme::accent() } else { theme::surface_bg_alt() };
+
+                let text_child = if filter_text.is_empty() && !focused {
+                    div()
+                        .text_size(theme::z(theme::FONT_SIZE))
+                        .text_color(theme::text_muted())
+                        .child("Filter")
+                } else {
+                    let pos = cursor.min(filter_text.len());
+                    let before = &filter_text[..pos];
+                    let after = &filter_text[pos..];
+                    h_flex()
+                        .items_center()
+                        .overflow_x_hidden()
+                        .text_size(theme::z(theme::FONT_SIZE))
+                        .child(div().text_color(theme::text_main()).whitespace_nowrap().child(before.to_string()))
+                        .child(if focused {
+                            div().w(px(1.0)).h(px(14.0)).bg(theme::text_main()).flex_shrink_0().into_any_element()
+                        } else {
+                            div().into_any_element()
+                        })
+                        .child(div().text_color(theme::text_main()).whitespace_nowrap().child(after.to_string()))
+                };
+
                 h_flex()
+                    .id("branch-filter-input")
+                    .track_focus(&self.branch_filter_focus)
+                    .key_context("text-field")
+                    .on_key_down(cx.listener(Self::handle_branch_filter_key))
                     .flex_1()
                     .h(px(28.0))
                     .px(px(8.0))
@@ -2851,20 +3468,16 @@ impl GitSparkApp {
                     .gap(px(6.0))
                     .rounded(theme::z(theme::CORNER_RADIUS))
                     .border_1()
-                    .border_color(theme::accent())
+                    .border_color(border_color)
                     .bg(theme::bg())
+                    .cursor_text()
                     .child(
                         Icon::new(IconName::Search)
                             .size(px(14.0))
                             .text_color(theme::text_muted()),
                     )
-                    .child(
-                        div()
-                            .text_size(theme::z(theme::FONT_SIZE))
-                            .text_color(theme::text_muted())
-                            .child("Filter"),
-                    ),
-            )
+                    .child(text_child)
+            })
             .child(
                 div()
                     .id("branch-new-btn")
@@ -2880,8 +3493,10 @@ impl GitSparkApp {
                     .cursor_pointer()
                     .hover(|s| s.bg(theme::toolbar_hover_bg()))
                     .on_click(cx.listener(|app, _evt, _win, cx| {
-                        // TODO: open a create-branch dialog; for now use branch_target
-                        app.create_branch(cx);
+                        // Pre-fill the new branch name from filter text
+                        app.repo.new_branch_name = app.filters.branch_filter_text.clone();
+                        app.nav.active_dialog = ActiveDialog::CreateBranch;
+                        cx.notify();
                     }))
                     .child(
                         div()
@@ -2891,17 +3506,41 @@ impl GitSparkApp {
                     ),
             );
 
-        // --- Section header ---
-        let section_header = div().w_full().px(px(10.0)).py(px(8.0)).child(
-            div()
-                .text_size(theme::z(theme::FONT_SIZE))
-                .text_color(theme::text_main())
-                .font_weight(FontWeight::BOLD)
-                .child("Default Branch"),
-        );
+        // --- Grouped branch list: Default Branch + Other Branches ---
+        // Separate into default (current) and others
+        let mut default_branches: Vec<BranchInfo> = Vec::new();
+        let mut other_branches: Vec<BranchInfo> = Vec::new();
+        for b in &local_branches {
+            if b.is_current || b.name == "main" || b.name == "master" {
+                default_branches.push((*b).clone());
+            } else {
+                other_branches.push((*b).clone());
+            }
+        }
 
-        // --- Branch list ---
-        let branch_list = if local_branches.is_empty() {
+        // Flatten into a single list with section markers
+        // We'll use a flat Vec<(Option<&str>, BranchInfo)> for the uniform_list
+        #[derive(Clone)]
+        enum BranchListItem {
+            SectionHeader(String),
+            Branch(BranchInfo),
+        }
+
+        let mut items: Vec<BranchListItem> = Vec::new();
+        if !default_branches.is_empty() {
+            items.push(BranchListItem::SectionHeader("Default Branch".to_string()));
+            for b in &default_branches {
+                items.push(BranchListItem::Branch(b.clone()));
+            }
+        }
+        if !other_branches.is_empty() {
+            items.push(BranchListItem::SectionHeader("Other Branches".to_string()));
+            for b in &other_branches {
+                items.push(BranchListItem::Branch(b.clone()));
+            }
+        }
+
+        let branch_list = if items.is_empty() {
             div().flex_1().child(
                 div()
                     .w_full()
@@ -2916,78 +3555,99 @@ impl GitSparkApp {
                     ),
             )
         } else {
-            let branches_owned: Vec<BranchInfo> =
-                local_branches.iter().map(|b| (*b).clone()).collect();
-            let count = branches_owned.len();
+            let count = items.len();
             let view = cx.entity().clone();
-            div().flex_1().child(
+            div().flex_1().min_h_0().child(
                 uniform_list("branch-list", count, {
                     move |range, _win, _cx| {
                         range
                             .map(|ix| {
-                                let branch = &branches_owned[ix];
-                                let is_current = branch.is_current;
-                                let name = branch.name.clone();
-                                let vh = view.clone();
+                                match &items[ix] {
+                                    BranchListItem::SectionHeader(title) => {
+                                        div()
+                                            .id(SharedString::from(format!("branch-section-{ix}")))
+                                            .w_full()
+                                            .px(px(10.0))
+                                            .py(px(8.0))
+                                            .child(
+                                                div()
+                                                    .text_size(theme::z(theme::FONT_SIZE))
+                                                    .text_color(theme::text_main())
+                                                    .font_weight(FontWeight::BOLD)
+                                                    .child(title.clone()),
+                                            )
+                                            .into_any_element()
+                                    }
+                                    BranchListItem::Branch(branch) => {
+                                        let is_current = branch.is_current;
+                                        let name = branch.name.clone();
+                                        let ctx_name = branch.name.clone();
+                                        let vh = view.clone();
 
-                                h_flex()
-                                    .id(SharedString::from(format!("branch-{}", branch.name)))
-                                    .w_full()
-                                    .h(px(40.0))
-                                    .px(px(10.0))
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .cursor_pointer()
-                                    .hover(|s| s.bg(theme::hover_bg()))
-                                    .bg(if is_current {
-                                        theme::hover_bg()
-                                    } else {
-                                        gpui::transparent_black()
-                                    })
-                                    // Checkmark for current branch
-                                    .child({
-                                        let mut check_slot = div()
-                                            .w(px(20.0))
-                                            .flex_shrink_0()
+                                        let row = h_flex()
+                                            .id(SharedString::from(format!("branch-{}", branch.name)))
+                                            .w_full()
+                                            .h(px(36.0))
+                                            .px(px(10.0))
                                             .items_center()
-                                            .justify_center();
-                                        if is_current {
-                                            check_slot = check_slot.child(
-                                                Icon::new(IconName::Check)
-                                                    .size(px(14.0))
-                                                    .text_color(theme::text_main()),
-                                            );
-                                        }
-                                        check_slot
-                                    })
-                                    // Branch name
-                                    .child(
-                                        div().flex_1().overflow_x_hidden().child(
-                                            div()
-                                                .text_size(theme::z(theme::FONT_SIZE))
-                                                .text_color(theme::text_main())
-                                                .whitespace_nowrap()
-                                                .child(branch.name.clone()),
-                                        ),
-                                    )
-                                    .on_click(move |_evt, _win, cx| {
-                                        let name = name.clone();
-                                        vh.update(cx, |app, cx| {
-                                            if !app
-                                                .repo
-                                                .snapshot
-                                                .as_ref()
-                                                .map(|s| s.repo.current_branch == name)
-                                                .unwrap_or(false)
-                                            {
-                                                app.repo.branch_target = name;
-                                                app.switch_branch(cx);
-                                            }
-                                            app.nav.show_branch_selector = false;
-                                            cx.notify();
-                                        });
-                                    })
-                                    .into_any_element()
+                                            .gap(px(8.0))
+                                            .cursor_pointer()
+                                            .hover(|s| s.bg(theme::hover_bg()))
+                                            .bg(if is_current {
+                                                theme::hover_bg()
+                                            } else {
+                                                gpui::transparent_black()
+                                            })
+                                            .child({
+                                                let mut check_slot = div()
+                                                    .w(px(20.0))
+                                                    .flex_shrink_0()
+                                                    .items_center()
+                                                    .justify_center();
+                                                if is_current {
+                                                    check_slot = check_slot.child(
+                                                        Icon::new(IconName::Check)
+                                                            .size(px(14.0))
+                                                            .text_color(theme::text_main()),
+                                                    );
+                                                }
+                                                check_slot
+                                            })
+                                            .child(
+                                                div().flex_1().overflow_x_hidden().child(
+                                                    div()
+                                                        .text_size(theme::z(theme::FONT_SIZE))
+                                                        .text_color(theme::text_main())
+                                                        .whitespace_nowrap()
+                                                        .child(branch.name.clone()),
+                                                ),
+                                            )
+                                            .on_click(move |_evt, _win, cx| {
+                                                let name = name.clone();
+                                                vh.update(cx, |app, cx| {
+                                                    if !app
+                                                        .repo
+                                                        .snapshot
+                                                        .as_ref()
+                                                        .map(|s| s.repo.current_branch == name)
+                                                        .unwrap_or(false)
+                                                    {
+                                                        app.repo.branch_target = name;
+                                                        app.switch_branch(cx);
+                                                    }
+                                                    app.nav.show_branch_selector = false;
+                                                    cx.notify();
+                                                });
+                                            });
+
+                                        crate::ui::branch_context_menu::bind_branch_context_click(
+                                            row,
+                                            view.clone(),
+                                            ctx_name,
+                                        )
+                                        .into_any_element()
+                                    }
+                                }
                             })
                             .collect()
                     }
@@ -3037,7 +3697,6 @@ impl GitSparkApp {
             .child(header)
             .child(tab_bar)
             .child(filter_bar)
-            .child(section_header)
             .child(branch_list)
             .child(bottom_bar)
     }

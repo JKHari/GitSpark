@@ -10,6 +10,8 @@ pub enum SidebarTab {
 pub enum SettingsSection {
     Git,
     Ai,
+    Appearance,
+    Integrations,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -25,6 +27,21 @@ pub enum OpenRouterModelsState {
     Error(String),
 }
 
+/// Which dialog is currently showing (at most one).
+#[derive(Clone, PartialEq)]
+pub enum ActiveDialog {
+    None,
+    CreateBranch,
+    DiscardChanges { paths: Vec<String> },
+    StashAndSwitch { target_branch: String },
+}
+
+impl Default for ActiveDialog {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
 pub struct NavState {
     pub main_tab: MainTab,
     pub sidebar_tab: SidebarTab,
@@ -33,6 +50,9 @@ pub struct NavState {
     pub show_branch_selector: bool,
     pub show_network_dropdown: bool,
     pub settings_section: SettingsSection,
+    pub active_dialog: ActiveDialog,
+    /// Undo commit: Some((summary, timestamp)) after a successful commit
+    pub undo_commit: Option<(String, std::time::Instant)>,
 }
 
 impl Default for NavState {
@@ -45,6 +65,8 @@ impl Default for NavState {
             show_branch_selector: false,
             show_network_dropdown: false,
             settings_section: SettingsSection::Git,
+            active_dialog: ActiveDialog::None,
+            undo_commit: None,
         }
     }
 }
@@ -77,6 +99,7 @@ pub struct FilterState {
     pub filter_text: String,
     pub change_filters: ChangeFilterOptions,
     pub repo_filter_text: String,
+    pub branch_filter_text: String,
     pub openrouter_model_filter: String,
     pub openrouter_models: OpenRouterModelsState,
 }
@@ -87,6 +110,7 @@ impl Default for FilterState {
             filter_text: String::new(),
             change_filters: ChangeFilterOptions::default(),
             repo_filter_text: String::new(),
+            branch_filter_text: String::new(),
             openrouter_model_filter: String::new(),
             openrouter_models: OpenRouterModelsState::Idle,
         }

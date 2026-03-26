@@ -1,4 +1,6 @@
 pub mod app;
+pub mod branch_context_menu;
+pub mod changes_context_menu;
 pub mod domain_state;
 pub mod history_context_menu;
 pub mod settings_modal;

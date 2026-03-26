@@ -150,6 +150,31 @@ impl GitClient {
         self.snapshot(&repo_path)
     }
 
+    pub fn stash_all(&self, repo_path: &Path) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        self.run_git(&repo_path, &["stash", "push", "-u", "-m", "GitSpark auto-stash"])
+            .context("failed to stash changes")?;
+        self.snapshot(&repo_path)
+    }
+
+    pub fn stash_pop(&self, repo_path: &Path) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        self.run_git(&repo_path, &["stash", "pop"])
+            .context("failed to pop stash")?;
+        self.snapshot(&repo_path)
+    }
+
+    pub fn undo_last_commit(&self, repo_path: &Path) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        self.run_git(&repo_path, &["reset", "--soft", "HEAD~1"])
+            .context("failed to undo last commit")?;
+        self.snapshot(&repo_path)
+    }
+
+    pub fn copy_to_clipboard_text(&self, _text: &str) {
+        // Platform clipboard handled by GPUI, this is a no-op placeholder
+    }
+
     pub fn checkout_commit(&self, repo_path: &Path, oid: &str) -> Result<RepoSnapshot> {
         let repo_path = self.resolve_repo_root(repo_path)?;
         let oid = self.verify_commit_oid(&repo_path, oid)?;
@@ -157,6 +182,17 @@ impl GitClient {
         self.run_git(&repo_path, &["switch", "--detach", &oid])
             .with_context(|| format!("failed to check out commit '{oid}'"))?;
 
+        self.snapshot(&repo_path)
+    }
+
+    pub fn delete_branch(&self, repo_path: &Path, branch_name: &str) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        let branch_name = branch_name.trim();
+        if branch_name.is_empty() {
+            bail!("branch name cannot be empty");
+        }
+        self.run_git(&repo_path, &["branch", "-d", branch_name])
+            .with_context(|| format!("failed to delete branch '{branch_name}'"))?;
         self.snapshot(&repo_path)
     }
 
