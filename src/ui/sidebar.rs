@@ -368,6 +368,13 @@ pub fn render_history_row(commit: &CommitInfo, selected: bool) -> Div {
         ),
     );
 
+    // Version tags
+    for tag in &commit.tags {
+        summary_row = summary_row.child(
+            Tag::secondary().xsmall().child(tag.clone()),
+        );
+    }
+
     if commit.is_head {
         summary_row = summary_row.child(Tag::primary().xsmall().child("HEAD"));
     }

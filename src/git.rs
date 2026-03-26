@@ -416,7 +416,7 @@ impl GitClient {
             &[
                 "log",
                 &format!("-n{limit}"),
-                "--pretty=format:%x1e%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ae%x1f%ar",
+                "--pretty=format:%x1e%H%x1f%h%x1f%s%x1f%b%x1f%an%x1f%ae%x1f%ar%x1f%D",
             ],
         )?;
 
@@ -431,9 +431,21 @@ impl GitClient {
             .filter(|record| !record.trim().is_empty())
         {
             let chunk: Vec<&str> = record.split('\u{1f}').collect();
-            if chunk.len() != 7 {
+            if chunk.len() < 7 {
                 continue;
             }
+
+            // Parse tags from %D (ref decorations like "HEAD -> main, tag: v0.3.0, origin/main")
+            let tags: Vec<String> = if chunk.len() > 7 {
+                chunk[7]
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| s.starts_with("tag: "))
+                    .map(|s| s.strip_prefix("tag: ").unwrap().to_string())
+                    .collect()
+            } else {
+                Vec::new()
+            };
 
             commits.push(CommitInfo {
                 oid: chunk[0].trim().to_string(),
@@ -444,6 +456,7 @@ impl GitClient {
                 author_email: chunk[5].trim().to_string(),
                 date: chunk[6].trim().to_string(),
                 is_head: false,
+                tags,
             });
         }
 

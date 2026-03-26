@@ -52,6 +52,7 @@ pub struct CommitInfo {
     pub author_email: String,
     pub date: String,
     pub is_head: bool,
+    pub tags: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
