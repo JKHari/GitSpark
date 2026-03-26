@@ -32,39 +32,39 @@ pub fn z(val: f32) -> Pixels {
 // Colors — GitHub Dark theme
 // ---------------------------------------------------------------------------
 
-// Core backgrounds
+// Core backgrounds — Primer dark primitives (neutral scale)
 pub fn bg() -> Hsla {
-    gpui::rgb(0x0d1117).into()
+    gpui::rgb(0x0d1117).into() // neutral-1
 }
 
 pub fn panel_bg() -> Hsla {
-    gpui::rgb(0x161b22).into()
+    gpui::rgb(0x151b23).into() // neutral-2
 }
 
 pub fn surface_bg() -> Hsla {
-    gpui::rgb(0x21262d).into()
+    gpui::rgb(0x212830).into() // neutral-3
 }
 
 pub fn surface_bg_alt() -> Hsla {
-    gpui::rgb(0x30363d).into()
+    gpui::rgb(0x2a313c).into() // neutral-5
 }
 
 pub fn surface_bg_muted() -> Hsla {
-    gpui::rgb(0x010409).into()
+    gpui::rgb(0x010409).into() // black
 }
 
 // Borders
 pub fn border() -> Hsla {
-    gpui::rgb(0x30363d).into()
+    gpui::rgb(0x3d444d).into() // neutral-7
 }
 
-// Text
+// Text — Primer dark
 pub fn text_main() -> Hsla {
-    gpui::rgb(0xc9d1d9).into()
+    gpui::rgb(0xd1d7e0).into() // neutral-11
 }
 
 pub fn text_muted() -> Hsla {
-    gpui::rgb(0x8b949e).into()
+    gpui::rgb(0x9198a1).into() // neutral-9
 }
 
 // Accent
@@ -118,7 +118,7 @@ pub fn diff_hunk_bg() -> Hsla {
 // ---------------------------------------------------------------------------
 
 pub fn hover_bg() -> Hsla {
-    gpui::rgb(0x1c2129).into()
+    gpui::rgb(0x151b23).into() // neutral-2
 }
 
 pub fn commit_button_bg() -> Hsla {
@@ -134,7 +134,7 @@ pub fn commit_button_text() -> Hsla {
 }
 
 pub fn line_num_color() -> Hsla {
-    gpui::rgb(0x8b949e).into() // --diff-line-number-color: var(--text-secondary-color)
+    gpui::rgb(0x656c76).into() // neutral-8 — --diff-line-number-color
 }
 
 // ---------------------------------------------------------------------------
@@ -150,11 +150,11 @@ pub fn toolbar_button_border() -> Hsla {
 }
 
 pub fn toolbar_hover_bg() -> Hsla {
-    gpui::rgb(0x30363d).into() // $gray-800 (dark) — --toolbar-button-hover-background-color
+    gpui::rgb(0x262c36).into() // neutral-4 — --toolbar-button-hover-background-color
 }
 
 pub fn toolbar_badge_bg() -> Hsla {
-    gpui::rgb(0x484f58).into() // $gray-700 (dark)
+    gpui::rgb(0x3d444d).into() // neutral-7
 }
 
 pub fn text_field_focus_shadow() -> Hsla {
