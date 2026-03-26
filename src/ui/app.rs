@@ -1473,7 +1473,7 @@ impl GitSparkApp {
             false,
         )
         .flex_none()
-        .w(px(200.0))
+        .w(px(300.0))
         .on_click(cx.listener(|app, _evt, _win, cx| {
             app.nav.show_branch_selector = !app.nav.show_branch_selector;
             app.nav.show_repo_selector = false;
@@ -1521,7 +1521,7 @@ impl GitSparkApp {
             .child(
                 div()
                     .flex_none()
-                    .w(px(200.0))
+                    .w(px(300.0))
                     .h_full()
                     .relative()
                     .child(
