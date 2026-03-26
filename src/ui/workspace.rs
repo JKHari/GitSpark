@@ -2,6 +2,8 @@ use gpui::*;
 use gpui_component::{h_flex, v_flex};
 
 use crate::models::DiffEntry;
+use gpui_component::scroll::ScrollableElement;
+
 use crate::ui::theme;
 use crate::ui::theme::z;
 
@@ -504,11 +506,12 @@ pub fn render_workspace(selected_file: Option<&str>, diff: Option<&DiffEntry>) -
                 scroll_content = scroll_content.child(render_diff_line(line));
             }
 
-            v_flex()
+            div()
                 .id("diff-scroll")
                 .w_full()
                 .flex_1()
-                .overflow_y_scroll()
+                .min_h_0()
+                .overflow_y_scrollbar()
                 .child(scroll_content)
                 .into_any_element()
         }
@@ -530,6 +533,7 @@ pub fn render_workspace(selected_file: Option<&str>, diff: Option<&DiffEntry>) -
         .w_full()
         .h_full()
         .flex_1()
+        .overflow_hidden()
         .items_start()
         .bg(theme::bg())
         .child(render_diff_header(file_path))
