@@ -1,4 +1,5 @@
 use gpui::*;
+use gpui_component::scroll::ScrollableElement;
 use gpui_component::tag::Tag;
 use gpui_component::{Icon, IconName, Sizable, h_flex, v_flex};
 
@@ -79,14 +80,14 @@ pub fn render_sidebar_interactive(
     let tab_bar = render_interactive_tab_bar(sidebar_tab, change_count, cx);
 
     // Content — virtualized with uniform_list
-    let content: Div = match sidebar_tab {
+    let content: AnyElement = match sidebar_tab {
         SidebarTab::Changes => {
             if changes.is_empty() {
-                div().flex_1().child(render_empty_state("No changed files"))
+                div().flex_1().child(render_empty_state("No changed files")).into_any_element()
             } else {
                 let changes_snapshot: Vec<ChangeEntry> = changes.to_vec();
                 let sel = selected_change.clone();
-                div().flex_1().child(
+                div().id("changes-scroll").flex_1().min_h_0().overflow_y_scrollbar().child(
                     uniform_list("changes-list", changes_snapshot.len(), {
                         let view = view.clone();
                         move |range, _win, _cx| {
@@ -114,16 +115,16 @@ pub fn render_sidebar_interactive(
                     })
                     .flex_1()
                     .with_sizing_behavior(ListSizingBehavior::Infer),
-                )
+                ).into_any_element()
             }
         }
         SidebarTab::History => {
             if history.is_empty() {
-                div().flex_1().child(render_empty_state("No history"))
+                div().flex_1().child(render_empty_state("No history")).into_any_element()
             } else {
                 let history_snapshot: Vec<CommitInfo> = history.to_vec();
                 let sel = selected_commit.clone();
-                div().flex_1().child(
+                div().id("history-scroll").flex_1().min_h_0().overflow_y_scrollbar().child(
                     uniform_list("history-list", history_snapshot.len(), {
                         let view = view.clone();
                         move |range, _win, _cx| {
@@ -154,7 +155,7 @@ pub fn render_sidebar_interactive(
                     })
                     .flex_1()
                     .with_sizing_behavior(ListSizingBehavior::Infer),
-                )
+                ).into_any_element()
             }
         }
     };
