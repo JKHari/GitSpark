@@ -32,12 +32,21 @@ fn main() {
         {
             (settings.window_size.width, settings.window_size.height)
         } else if let Some(display) = cx.primary_display() {
-            let dw = display.bounds().size.width.0;
-            let dh = display.bounds().size.height.0;
-            let win_h = (dh * 0.6).max(600.0);
-            let max_w = win_h * 16.0 / 9.0;
-            let win_w = (dw * 0.6).max(960.0).min(max_w);
-            (win_w, win_h)
+            let dw = display.bounds().size.width;
+            let dh = display.bounds().size.height;
+            let win_h = dh * 0.6;
+            let win_h = if win_h < px(600.0) { px(600.0) } else { win_h };
+            let max_w = win_h * (16.0 / 9.0);
+            let win_w_raw = dw * 0.6;
+            let win_w = if win_w_raw < px(960.0) {
+                px(960.0)
+            } else if win_w_raw > max_w {
+                max_w
+            } else {
+                win_w_raw
+            };
+            // Pixels / Pixels -> f32
+            (win_w / px(1.0), win_h / px(1.0))
         } else {
             (1280.0, 860.0)
         };
