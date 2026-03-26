@@ -2217,8 +2217,8 @@ impl GitSparkApp {
         // Find the diff entry for the selected file.
         let selected_diff = selected_file.and_then(|path| diffs.iter().find(|d| d.path == path));
 
-        // Show file list panel + diff when there are files to show
-        if !diffs.is_empty() {
+        // Show file list panel only on History tab (Changes tab has sidebar file list)
+        if sidebar_tab == SidebarTab::History && !diffs.is_empty() {
             let file_list = self.render_commit_file_list(diffs, selected_file, sidebar_tab, cx);
             h_resizable("workspace-panels")
                 .child(
