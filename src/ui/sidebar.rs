@@ -1,7 +1,6 @@
 use gpui::*;
-use gpui_component::tab::{Tab, TabBar};
 use gpui_component::tag::Tag;
-use gpui_component::{h_flex, v_flex, Icon, IconName, Sizable};
+use gpui_component::{Icon, IconName, Sizable, h_flex, v_flex};
 
 use crate::models::{ChangeEntry, CommitInfo};
 use crate::ui::app::GitSparkApp;
@@ -93,8 +92,7 @@ pub fn render_sidebar_interactive(
                             range
                                 .map(|ix| {
                                     let change = &changes_snapshot[ix];
-                                    let is_selected =
-                                        sel.as_deref() == Some(change.path.as_str());
+                                    let is_selected = sel.as_deref() == Some(change.path.as_str());
                                     let path = change.path.clone();
                                     let vh = view.clone();
                                     render_change_row(change, is_selected)
@@ -131,15 +129,11 @@ pub fn render_sidebar_interactive(
                             range
                                 .map(|ix| {
                                     let commit = &history_snapshot[ix];
-                                    let is_selected =
-                                        sel.as_deref() == Some(commit.oid.as_str());
+                                    let is_selected = sel.as_deref() == Some(commit.oid.as_str());
                                     let oid = commit.oid.clone();
                                     let vh = view.clone();
                                     render_history_row(commit, is_selected)
-                                        .id(SharedString::from(format!(
-                                            "commit-{}",
-                                            commit.oid
-                                        )))
+                                        .id(SharedString::from(format!("commit-{}", commit.oid)))
                                         .cursor_pointer()
                                         .hover(|s| s.bg(theme::hover_bg()))
                                         .on_click(move |_evt, _win, cx| {
@@ -173,19 +167,24 @@ fn render_interactive_tab_bar(
     active_tab: SidebarTab,
     change_count: usize,
     cx: &mut Context<GitSparkApp>,
-) -> impl IntoElement {
-    let selected_index = match active_tab {
-        SidebarTab::Changes => 0,
-        SidebarTab::History => 1,
-    };
+) -> Div {
+    let is_changes = active_tab == SidebarTab::Changes;
 
-    let mut changes_tab = Tab::new()
-        .label("Changes")
-        .small();
+    // Changes tab content
+    let mut changes_content = h_flex().items_center().justify_center().gap(z(4.0)).child(
+        div()
+            .text_size(z(theme::FONT_SIZE))
+            .text_color(if is_changes {
+                theme::text_main()
+            } else {
+                theme::text_muted()
+            })
+            .font_weight(FontWeight::SEMIBOLD)
+            .child("Changes"),
+    );
 
     if change_count > 0 {
-        // Inline counter pill matching GitHub Desktop's --tab-bar-count style
-        changes_tab = changes_tab.suffix(
+        changes_content = changes_content.child(
             div()
                 .px(z(6.0))
                 .py(z(1.0))
@@ -197,23 +196,63 @@ fn render_interactive_tab_bar(
         );
     }
 
-    let history_tab = Tab::new()
-        .label("History")
-        .small();
-
-    TabBar::new("sidebar-tabs")
-        .underline()
-        .small()
-        .selected_index(selected_index)
-        .child(changes_tab)
-        .child(history_tab)
-        .on_click(cx.listener(move |app, index, _win, cx| {
-            app.nav.sidebar_tab = match index {
-                0 => SidebarTab::Changes,
-                _ => SidebarTab::History,
-            };
+    let changes_tab = div()
+        .id("tab-changes")
+        .flex_1()
+        .h(z(34.0))
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .border_b_2()
+        .border_color(if is_changes {
+            theme::accent()
+        } else {
+            gpui::transparent_black()
+        })
+        .hover(|s| s.bg(theme::hover_bg()))
+        .on_click(cx.listener(|app, _evt, _win, cx| {
+            app.nav.sidebar_tab = SidebarTab::Changes;
             cx.notify();
         }))
+        .child(changes_content);
+
+    let history_tab = div()
+        .id("tab-history")
+        .flex_1()
+        .h(z(34.0))
+        .items_center()
+        .justify_center()
+        .cursor_pointer()
+        .border_b_2()
+        .border_color(if !is_changes {
+            theme::accent()
+        } else {
+            gpui::transparent_black()
+        })
+        .hover(|s| s.bg(theme::hover_bg()))
+        .on_click(cx.listener(|app, _evt, _win, cx| {
+            app.nav.sidebar_tab = SidebarTab::History;
+            cx.notify();
+        }))
+        .child(
+            div()
+                .text_size(z(theme::FONT_SIZE))
+                .text_color(if !is_changes {
+                    theme::text_main()
+                } else {
+                    theme::text_muted()
+                })
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("History"),
+        );
+
+    h_flex()
+        .w_full()
+        .flex_shrink_0()
+        .border_b_1()
+        .border_color(theme::border())
+        .child(changes_tab)
+        .child(history_tab)
 }
 
 // ---------------------------------------------------------------------------
@@ -253,16 +292,13 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
         .gap(z(5.0))
         .child(checkbox)
         .child(
-            div()
-                .flex_1()
-                .overflow_x_hidden()
-                .child(
-                    div()
-                        .text_size(z(12.0))
-                        .text_color(text_color)
-                        .whitespace_nowrap()
-                        .child(change.path.clone()),
-                ),
+            div().flex_1().overflow_x_hidden().child(
+                div()
+                    .text_size(z(12.0))
+                    .text_color(text_color)
+                    .whitespace_nowrap()
+                    .child(change.path.clone()),
+            ),
         )
         .child(status_tag(badge_label))
 }
@@ -315,28 +351,19 @@ pub fn render_history_row(commit: &CommitInfo, selected: bool) -> Div {
 
     let meta = format!("{} \u{00b7} {}", commit.author_name, commit.date);
 
-    let mut summary_row = h_flex()
-        .gap(z(6.0))
-        .child(
+    let mut summary_row = h_flex().gap(z(6.0)).child(
+        div().flex_1().overflow_x_hidden().child(
             div()
-                .flex_1()
-                .overflow_x_hidden()
-                .child(
-                    div()
-                        .text_size(z(12.0))
-                        .text_color(summary_color)
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .whitespace_nowrap()
-                        .child(commit.summary.clone()),
-                ),
-        );
+                .text_size(z(12.0))
+                .text_color(summary_color)
+                .font_weight(FontWeight::SEMIBOLD)
+                .whitespace_nowrap()
+                .child(commit.summary.clone()),
+        ),
+    );
 
     if commit.is_head {
-        summary_row = summary_row.child(
-            Tag::primary()
-                .xsmall()
-                .child("HEAD"),
-        );
+        summary_row = summary_row.child(Tag::primary().xsmall().child("HEAD"));
     }
 
     v_flex()

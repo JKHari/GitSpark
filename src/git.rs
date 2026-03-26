@@ -77,7 +77,12 @@ impl GitClient {
         let repo_path = self.resolve_repo_root(path)?;
         let status = self.run_git(
             &repo_path,
-            &["status", "--porcelain=v2", "-b", "--ignore-submodules=dirty"],
+            &[
+                "status",
+                "--porcelain=v2",
+                "-b",
+                "--ignore-submodules=dirty",
+            ],
         )?;
         let stash_count = self.stash_count(&repo_path).unwrap_or(0);
         Ok(format!("{status}\n__stash_count={stash_count}"))
@@ -135,8 +140,11 @@ impl GitClient {
             self.run_git(&repo_path, &["push", &remote_name])
                 .with_context(|| format!("failed to push to '{remote_name}'"))?;
         } else {
-            self.run_git(&repo_path, &["push", "--set-upstream", &remote_name, "HEAD"])
-                .with_context(|| format!("failed to publish branch to '{remote_name}'"))?;
+            self.run_git(
+                &repo_path,
+                &["push", "--set-upstream", &remote_name, "HEAD"],
+            )
+            .with_context(|| format!("failed to publish branch to '{remote_name}'"))?;
         }
 
         self.snapshot(&repo_path)
@@ -445,7 +453,12 @@ impl GitClient {
     fn has_upstream(&self, repo_path: &Path) -> bool {
         self.run_git(
             repo_path,
-            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
         )
         .map(|value| !value.trim().is_empty())
         .unwrap_or(false)
@@ -454,7 +467,12 @@ impl GitClient {
     fn read_primary_remote(&self, repo_path: &Path) -> Result<Option<String>> {
         if let Ok(upstream) = self.run_git(
             repo_path,
-            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"],
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                "@{upstream}",
+            ],
         ) {
             let upstream = upstream.trim();
             if let Some((remote, _)) = upstream.split_once('/') {

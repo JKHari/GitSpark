@@ -2114,6 +2114,7 @@ dependencies = [
  "open",
  "regex",
  "rfd",
+ "rust-embed",
  "serde",
  "serde_json",
  "syntect",

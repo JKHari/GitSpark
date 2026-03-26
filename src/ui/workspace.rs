@@ -127,10 +127,7 @@ fn parse_diff(raw: &str) -> Vec<DiffLine> {
             // Hunk header
             result.push(DiffLine {
                 kind: DiffLineKind::HunkHeader,
-                content: hunk_header_texts
-                    .get(hunk_idx)
-                    .cloned()
-                    .unwrap_or_default(),
+                content: hunk_header_texts.get(hunk_idx).cloned().unwrap_or_default(),
                 new_content: None,
                 old_line: None,
                 new_line: None,
@@ -143,24 +140,14 @@ fn parse_diff(raw: &str) -> Vec<DiffLine> {
         if line.is_del {
             // Collect contiguous deleted lines
             let del_start = i;
-            while i < raw_lines.len()
-                && raw_lines[i]
-                    .as_ref()
-                    .map(|l| l.is_del)
-                    .unwrap_or(false)
-            {
+            while i < raw_lines.len() && raw_lines[i].as_ref().map(|l| l.is_del).unwrap_or(false) {
                 i += 1;
             }
             let del_end = i;
 
             // Collect contiguous added lines that follow
             let add_start = i;
-            while i < raw_lines.len()
-                && raw_lines[i]
-                    .as_ref()
-                    .map(|l| l.is_add)
-                    .unwrap_or(false)
-            {
+            while i < raw_lines.len() && raw_lines[i].as_ref().map(|l| l.is_add).unwrap_or(false) {
                 i += 1;
             }
             let add_end = i;
@@ -480,43 +467,36 @@ fn render_empty_state() -> Div {
 ///
 /// Fills the remaining horizontal space (flex-1) and displays either
 /// a unified diff for the selected file or a placeholder message.
-pub fn render_workspace(
-    selected_file: Option<&str>,
-    diff: Option<&DiffEntry>,
-) -> Div {
+pub fn render_workspace(selected_file: Option<&str>, diff: Option<&DiffEntry>) -> Div {
     let Some(file_path) = selected_file else {
         return render_empty_state();
     };
 
     let diff_content: AnyElement = match diff {
-        Some(entry) if entry.is_binary => {
-            div()
-                .w_full()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_color(theme::text_muted())
-                        .text_size(z(14.0))
-                        .child("Binary file changed."),
-                )
-                .into_any_element()
-        }
-        Some(entry) if entry.diff.trim().is_empty() => {
-            div()
-                .w_full()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_color(theme::text_muted())
-                        .text_size(z(14.0))
-                        .child("No diff text available."),
-                )
-                .into_any_element()
-        }
+        Some(entry) if entry.is_binary => div()
+            .w_full()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .text_color(theme::text_muted())
+                    .text_size(z(14.0))
+                    .child("Binary file changed."),
+            )
+            .into_any_element(),
+        Some(entry) if entry.diff.trim().is_empty() => div()
+            .w_full()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .text_color(theme::text_muted())
+                    .text_size(z(14.0))
+                    .child("No diff text available."),
+            )
+            .into_any_element(),
         Some(entry) => {
             let parsed = parse_diff(&entry.diff);
             let mut scroll_content = v_flex().w_full();
@@ -532,20 +512,18 @@ pub fn render_workspace(
                 .child(scroll_content)
                 .into_any_element()
         }
-        None => {
-            div()
-                .w_full()
-                .flex_1()
-                .items_center()
-                .justify_center()
-                .child(
-                    div()
-                        .text_color(theme::text_muted())
-                        .text_size(z(14.0))
-                        .child("No diff available for this file."),
-                )
-                .into_any_element()
-        }
+        None => div()
+            .w_full()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .text_color(theme::text_muted())
+                    .text_size(z(14.0))
+                    .child("No diff available for this file."),
+            )
+            .into_any_element(),
     };
 
     v_flex()

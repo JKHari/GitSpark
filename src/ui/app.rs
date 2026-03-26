@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use std::{env, process::Command};
@@ -9,7 +9,7 @@ use std::{env, process::Command};
 use gpui::*;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::{h_flex, v_flex, Icon, IconName, Sizable};
+use gpui_component::{Icon, IconName, Sizable, h_flex, v_flex};
 use rfd::FileDialog;
 
 use crate::ai::AiClient;
@@ -19,11 +19,12 @@ use crate::models::{
     RemoteModelOption, RepoSnapshot,
 };
 use crate::storage::{push_recent_repo, save_settings};
-use crate::ui::domain_state::{CommitState, NetworkAction, NetworkState, RepoState, SelectionState};
-use crate::ui::theme;
-use crate::ui::ui_state::{
-    FilterState, MessageState, NavState, OpenRouterModelsState, SidebarTab,
+use crate::ui::domain_state::{
+    CommitState, NetworkAction, NetworkState, RepoState, SelectionState,
 };
+use crate::ui::settings_modal::{self, SettingsField, SettingsModalState};
+use crate::ui::theme;
+use crate::ui::ui_state::{FilterState, MessageState, NavState, OpenRouterModelsState, SidebarTab};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -145,6 +146,7 @@ pub struct GitSparkApp {
     description_focus: FocusHandle,
     summary_cursor: usize,
     description_cursor: usize,
+    pub(crate) settings_modal: SettingsModalState,
     // Zoom
     rem_size: f32,
 }
@@ -178,6 +180,7 @@ impl GitSparkApp {
             description_focus: cx.focus_handle(),
             summary_cursor: 0,
             description_cursor: 0,
+            settings_modal: SettingsModalState::new(cx),
             rem_size: DEFAULT_REM_SIZE,
         };
 
@@ -217,7 +220,9 @@ impl GitSparkApp {
         // indicates events are pending. Idle polls are lock-free.
         cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor().timer(Duration::from_millis(32)).await;
+                cx.background_executor()
+                    .timer(Duration::from_millis(32))
+                    .await;
                 if !event_pending.load(Ordering::Acquire) {
                     continue;
                 }
@@ -227,7 +232,8 @@ impl GitSparkApp {
                     });
                 });
             }
-        }).detach();
+        })
+        .detach();
 
         app
     }
@@ -248,8 +254,7 @@ impl GitSparkApp {
                     self.messages.error_message.clear();
                 }
                 AppEvent::RepoLoaded(Err(err)) => {
-                    self.messages.error_message =
-                        format!("Failed to open repository: {err}");
+                    self.messages.error_message = format!("Failed to open repository: {err}");
                 }
                 AppEvent::RepoRefreshed(path, Ok(snapshot), reason) => {
                     let should_apply = self
@@ -283,13 +288,11 @@ impl GitSparkApp {
                 }
                 AppEvent::BranchSwitched(Ok(snapshot), branch) => {
                     self.adopt_snapshot(snapshot);
-                    self.messages.status_message =
-                        format!("Switched to branch '{branch}'.");
+                    self.messages.status_message = format!("Switched to branch '{branch}'.");
                     self.messages.error_message.clear();
                 }
                 AppEvent::BranchSwitched(Err(err), _) => {
-                    self.messages.error_message =
-                        format!("Branch switch failed: {err}");
+                    self.messages.error_message = format!("Branch switch failed: {err}");
                 }
                 AppEvent::BranchMerged(Ok(snapshot), branch) => {
                     self.adopt_snapshot(snapshot);
@@ -315,14 +318,12 @@ impl GitSparkApp {
                 AppEvent::NetworkActionCompleted(Ok(snapshot), action_label) => {
                     self.network.active_action = None;
                     self.adopt_snapshot(snapshot);
-                    self.messages.status_message =
-                        format!("{action_label} complete.");
+                    self.messages.status_message = format!("{action_label} complete.");
                     self.messages.error_message.clear();
                 }
                 AppEvent::NetworkActionCompleted(Err(err), action_label) => {
                     self.network.active_action = None;
-                    self.messages.error_message =
-                        format!("{action_label} failed: {err}");
+                    self.messages.error_message = format!("{action_label} failed: {err}");
                 }
                 AppEvent::AiCommitGenerated(Ok(suggestion)) => {
                     self.commit.ai_in_flight = false;
@@ -331,14 +332,12 @@ impl GitSparkApp {
                     self.summary_cursor = self.commit.summary.len();
                     self.description_cursor = self.commit.body.len();
                     self.commit.ai_preview = Some(suggestion);
-                    self.messages.status_message =
-                        "Generated commit suggestion.".to_string();
+                    self.messages.status_message = "Generated commit suggestion.".to_string();
                     self.messages.error_message.clear();
                 }
                 AppEvent::AiCommitGenerated(Err(err)) => {
                     self.commit.ai_in_flight = false;
-                    self.messages.error_message =
-                        format!("AI generation failed: {err}");
+                    self.messages.error_message = format!("AI generation failed: {err}");
                 }
                 AppEvent::OpenRouterModelsLoaded(Ok(models)) => {
                     if self.settings.ai.provider == AiProvider::OpenRouter
@@ -348,25 +347,21 @@ impl GitSparkApp {
                             self.settings.ai.model = first.id.clone();
                         }
                     }
-                    self.filters.openrouter_models =
-                        OpenRouterModelsState::Ready(models);
+                    self.filters.openrouter_models = OpenRouterModelsState::Ready(models);
                 }
                 AppEvent::OpenRouterModelsLoaded(Err(err)) => {
-                    self.filters.openrouter_models =
-                        OpenRouterModelsState::Error(err);
+                    self.filters.openrouter_models = OpenRouterModelsState::Error(err);
                 }
                 AppEvent::CommitDiffLoaded(oid, Ok(diffs)) => {
                     if self.selection.selected_commit.as_deref() == Some(oid.as_str()) {
                         if let Some(first) = diffs.first() {
-                            self.selection.selected_commit_file =
-                                Some(first.path.clone());
+                            self.selection.selected_commit_file = Some(first.path.clone());
                         }
                         self.selection.commit_diffs = Some(diffs);
                     }
                 }
                 AppEvent::CommitDiffLoaded(_, Err(err)) => {
-                    self.messages.error_message =
-                        format!("Failed to load commit details: {err}");
+                    self.messages.error_message = format!("Failed to load commit details: {err}");
                 }
             }
         }
@@ -422,15 +417,13 @@ impl GitSparkApp {
                     cx.write_to_clipboard(ClipboardItem::new_string(
                         full_path.to_string_lossy().to_string(),
                     ));
-                    self.messages.status_message =
-                        format!("Copied absolute path for '{path}'.");
+                    self.messages.status_message = format!("Copied absolute path for '{path}'.");
                     self.messages.error_message.clear();
                 }
             }
             SidebarAction::CopyRelativePath(path) => {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.clone()));
-                self.messages.status_message =
-                    format!("Copied relative path for '{path}'.");
+                self.messages.status_message = format!("Copied relative path for '{path}'.");
                 self.messages.error_message.clear();
             }
             SidebarAction::RevealInFinder(path) => self.reveal_in_finder(&path),
@@ -445,16 +438,15 @@ impl GitSparkApp {
                             self.messages.error_message.clear();
                         }
                         Err(err) => {
-                            self.messages.error_message = format!(
-                                "Failed to open '{path}' with default program: {err}"
-                            );
+                            self.messages.error_message =
+                                format!("Failed to open '{path}' with default program: {err}");
                         }
                     }
                 }
             }
             SidebarAction::SelectCommit(oid) => self.select_commit(oid, cx),
             SidebarAction::GenerateAiCommit => self.generate_ai_commit(cx),
-            SidebarAction::ShowSettings => self.nav.show_settings = true,
+            SidebarAction::ShowSettings => self.open_settings_modal(None, cx),
             SidebarAction::CommitAll => self.commit_all(cx),
         }
         cx.notify();
@@ -480,19 +472,25 @@ impl GitSparkApp {
                 self.settings.ai.endpoint =
                     self.settings.ai.provider.default_endpoint().to_string();
                 self.filters.openrouter_model_filter.clear();
+                self.settings_modal.openrouter_model_filter_cursor = 0;
                 if self.settings.ai.provider == AiProvider::OpenRouter {
+                    self.settings_modal.active_field = Some(SettingsField::OpenRouterModelFilter);
                     self.ensure_openrouter_models(cx);
+                } else {
+                    self.settings_modal.active_field = Some(SettingsField::AiModel);
+                    self.settings_modal.ai_model_cursor = self.settings.ai.model.len();
                 }
             }
             SettingsAction::SelectOpenRouterModel(model_id) => {
                 self.settings.ai.model = model_id;
+                self.settings_modal.ai_model_cursor = self.settings.ai.model.len();
             }
             SettingsAction::RetryOpenRouterModels => {
                 self.filters.openrouter_models = OpenRouterModelsState::Idle;
                 self.ensure_openrouter_models(cx);
             }
             SettingsAction::Close => {
-                self.nav.show_settings = false;
+                self.close_settings_modal();
             }
         }
         cx.notify();
@@ -685,9 +683,7 @@ impl GitSparkApp {
         let tx = self.event_tx.clone();
         let git = GitClient::new();
         thread::spawn(move || {
-            let res = git
-                .switch_branch(&path, &target)
-                .map_err(|e| e.to_string());
+            let res = git.switch_branch(&path, &target).map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::BranchSwitched(res, target));
         });
         cx.notify();
@@ -735,9 +731,7 @@ impl GitSparkApp {
         let tx = self.event_tx.clone();
         let git = GitClient::new();
         thread::spawn(move || {
-            let res = git
-                .merge_branch(&path, &target)
-                .map_err(|e| e.to_string());
+            let res = git.merge_branch(&path, &target).map_err(|e| e.to_string());
             let _ = tx.send(AppEvent::BranchMerged(res, target));
         });
         cx.notify();
@@ -859,8 +853,7 @@ impl GitSparkApp {
                 self.messages.error_message.clear();
             }
             Err(err) => {
-                self.messages.error_message =
-                    format!("Failed to save git config: {err}");
+                self.messages.error_message = format!("Failed to save git config: {err}");
             }
         }
     }
@@ -872,8 +865,7 @@ impl GitSparkApp {
             }
             Err(err) => {
                 self.repo.identity = GitIdentity::default();
-                self.messages.error_message =
-                    format!("Could not load git config: {err}");
+                self.messages.error_message = format!("Could not load git config: {err}");
             }
         }
     }
@@ -897,8 +889,7 @@ impl GitSparkApp {
     }
 
     pub fn select_commit(&mut self, oid: String, cx: &mut Context<Self>) {
-        let already_selected =
-            self.selection.selected_commit.as_deref() == Some(oid.as_str());
+        let already_selected = self.selection.selected_commit.as_deref() == Some(oid.as_str());
         if already_selected && self.selection.commit_diffs.is_some() {
             return;
         }
@@ -928,10 +919,8 @@ impl GitSparkApp {
                 self.messages.error_message.clear();
             }
             Err(err) => {
-                self.messages.error_message = format!(
-                    "Failed to discard changes for '{}': {err}",
-                    relative_path
-                );
+                self.messages.error_message =
+                    format!("Failed to discard changes for '{}': {err}", relative_path);
             }
         }
     }
@@ -946,8 +935,7 @@ impl GitSparkApp {
         match self.git.append_gitignore_pattern(&repo_path, &pattern) {
             Ok(snapshot) => {
                 self.adopt_snapshot(snapshot);
-                self.messages.status_message =
-                    format!("Added '{}' to .gitignore.", relative_path);
+                self.messages.status_message = format!("Added '{}' to .gitignore.", relative_path);
                 self.messages.error_message.clear();
             }
             Err(err) => {
@@ -967,13 +955,11 @@ impl GitSparkApp {
         match self.git.append_gitignore_pattern(&repo_path, &pattern) {
             Ok(snapshot) => {
                 self.adopt_snapshot(snapshot);
-                self.messages.status_message =
-                    format!("Added '{}' to .gitignore.", pattern);
+                self.messages.status_message = format!("Added '{}' to .gitignore.", pattern);
                 self.messages.error_message.clear();
             }
             Err(err) => {
-                self.messages.error_message =
-                    format!("Failed to ignore '{}': {err}", pattern);
+                self.messages.error_message = format!("Failed to ignore '{}': {err}", pattern);
             }
         }
     }
@@ -997,8 +983,7 @@ impl GitSparkApp {
 
         match result {
             Ok(_) => {
-                self.messages.status_message =
-                    format!("Revealed '{}' in Finder.", relative_path);
+                self.messages.status_message = format!("Revealed '{}' in Finder.", relative_path);
                 self.messages.error_message.clear();
             }
             Err(err) => {
@@ -1072,8 +1057,7 @@ impl GitSparkApp {
 
     fn persist_settings(&mut self) {
         if let Err(err) = save_settings(&self.settings) {
-            self.messages.error_message =
-                format!("Failed to save settings: {err}");
+            self.messages.error_message = format!("Failed to save settings: {err}");
         }
     }
 
@@ -1084,8 +1068,7 @@ impl GitSparkApp {
     fn adopt_snapshot(&mut self, snapshot: RepoSnapshot) {
         let previous_commit = self.selection.selected_commit.clone();
         let current_branch = snapshot.repo.current_branch.clone();
-        self.selection.selected_change =
-            snapshot.changes.first().map(|change| change.path.clone());
+        self.selection.selected_change = snapshot.changes.first().map(|change| change.path.clone());
         self.repo.branch_target = current_branch;
         self.repo.merge_target = snapshot
             .branches
@@ -1142,6 +1125,39 @@ impl Render for GitSparkApp {
         // Clamp cursors to valid positions (e.g. after AI fill or clear)
         self.summary_cursor = self.summary_cursor.min(self.commit.summary.len());
         self.description_cursor = self.description_cursor.min(self.commit.body.len());
+        self.settings_modal.git_user_name_cursor = self
+            .settings_modal
+            .git_user_name_cursor
+            .min(self.repo.identity.user_name.len());
+        self.settings_modal.git_user_email_cursor = self
+            .settings_modal
+            .git_user_email_cursor
+            .min(self.repo.identity.user_email.len());
+        self.settings_modal.git_default_branch_cursor =
+            self.settings_modal.git_default_branch_cursor.min(
+                self.repo
+                    .identity
+                    .default_branch
+                    .as_deref()
+                    .unwrap_or("")
+                    .len(),
+            );
+        self.settings_modal.ai_model_cursor = self
+            .settings_modal
+            .ai_model_cursor
+            .min(self.settings.ai.model.len());
+        self.settings_modal.ai_api_key_cursor = self
+            .settings_modal
+            .ai_api_key_cursor
+            .min(self.settings.ai.api_key.len());
+        self.settings_modal.ai_system_prompt_cursor = self
+            .settings_modal
+            .ai_system_prompt_cursor
+            .min(self.settings.ai.system_prompt.len());
+        self.settings_modal.openrouter_model_filter_cursor = self
+            .settings_modal
+            .openrouter_model_filter_cursor
+            .min(self.filters.openrouter_model_filter.len());
 
         let summary_focused = self.summary_focus.is_focused(window);
         let description_focused = self.description_focus.is_focused(window);
@@ -1150,15 +1166,16 @@ impl Render for GitSparkApp {
         let (toolbar_left, toolbar_right) = self.render_toolbar_parts(cx);
 
         // Left column: repo toolbar section + sidebar (or repo selector)
-        let left_column = v_flex()
-            .size_full()
-            .child(toolbar_left)
-            .child(if self.nav.show_repo_selector {
-                self.render_repo_selector_panel(cx).into_any_element()
-            } else {
-                self.render_sidebar(summary_focused, description_focused, cx)
-                    .into_any_element()
-            });
+        let left_column =
+            v_flex()
+                .size_full()
+                .child(toolbar_left)
+                .child(if self.nav.show_repo_selector {
+                    self.render_repo_selector_panel(cx).into_any_element()
+                } else {
+                    self.render_sidebar(summary_focused, description_focused, cx)
+                        .into_any_element()
+                });
 
         // Right column: branch + network toolbar sections + workspace
         // Branch selector overlay lives inside the right column so it aligns naturally
@@ -1200,7 +1217,7 @@ impl Render for GitSparkApp {
             .child(self.render_status_bar());
 
         if self.nav.show_settings {
-            root = root.child(self.render_settings_overlay(cx));
+            root = root.child(settings_modal::render_settings_modal(self, window, cx));
         }
 
         root
@@ -1288,25 +1305,18 @@ impl GitSparkApp {
         );
 
         let net_action = network_action;
-        let network_main = network_main.on_click(
-            cx.listener(move |app, _evt, _win, cx| {
-                if app.network.active_action.is_none() {
-                    app.nav.show_network_dropdown = false;
-                    app.handle_toolbar_action(
-                        ToolbarAction::RunNetworkAction(net_action),
-                        cx,
-                    );
-                }
-            }),
-        );
-        let network_caret = network_caret.on_click(
-            cx.listener(|app, _evt, _win, cx| {
-                app.nav.show_network_dropdown = !app.nav.show_network_dropdown;
-                app.nav.show_repo_selector = false;
-                app.nav.show_branch_selector = false;
-                cx.notify();
-            }),
-        );
+        let network_main = network_main.on_click(cx.listener(move |app, _evt, _win, cx| {
+            if app.network.active_action.is_none() {
+                app.nav.show_network_dropdown = false;
+                app.handle_toolbar_action(ToolbarAction::RunNetworkAction(net_action), cx);
+            }
+        }));
+        let network_caret = network_caret.on_click(cx.listener(|app, _evt, _win, cx| {
+            app.nav.show_network_dropdown = !app.nav.show_network_dropdown;
+            app.nav.show_repo_selector = false;
+            app.nav.show_branch_selector = false;
+            cx.notify();
+        }));
 
         let mut network_dropdown = div();
         if self.nav.show_network_dropdown {
@@ -1483,8 +1493,7 @@ impl GitSparkApp {
         match ks.key.as_str() {
             "backspace" => {
                 if self.description_cursor > 0 {
-                    let new_pos =
-                        prev_char_boundary(&self.commit.body, self.description_cursor);
+                    let new_pos = prev_char_boundary(&self.commit.body, self.description_cursor);
                     self.commit.body.drain(new_pos..self.description_cursor);
                     self.description_cursor = new_pos;
                     cx.notify();
@@ -1532,6 +1541,182 @@ impl GitSparkApp {
                         cx.notify();
                     }
                 }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Settings modal input handling
+    // ------------------------------------------------------------------
+
+    pub(crate) fn close_settings_modal(&mut self) {
+        self.nav.show_settings = false;
+        self.settings_modal.active_field = None;
+    }
+
+    fn open_settings_modal(
+        &mut self,
+        section: Option<crate::ui::ui_state::SettingsSection>,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(section) = section {
+            self.nav.settings_section = section;
+        }
+
+        self.nav.show_settings = true;
+        let field = if self.nav.settings_section == crate::ui::ui_state::SettingsSection::Ai
+            && self.settings.ai.provider == AiProvider::OpenRouter
+        {
+            SettingsField::OpenRouterModelFilter
+        } else {
+            settings_modal::default_settings_field(self.nav.settings_section)
+        };
+        self.settings_modal.active_field = Some(field);
+        self.set_settings_field_cursor(field, self.settings_field_value(field).len());
+
+        if self.nav.settings_section == crate::ui::ui_state::SettingsSection::Ai
+            && self.settings.ai.provider == AiProvider::OpenRouter
+        {
+            self.ensure_openrouter_models(cx);
+        }
+    }
+
+    pub(crate) fn settings_field_value(&self, field: SettingsField) -> &str {
+        match field {
+            SettingsField::GitUserName => self.repo.identity.user_name.as_str(),
+            SettingsField::GitUserEmail => self.repo.identity.user_email.as_str(),
+            SettingsField::GitDefaultBranch => {
+                self.repo.identity.default_branch.as_deref().unwrap_or("")
+            }
+            SettingsField::AiModel => self.settings.ai.model.as_str(),
+            SettingsField::AiApiKey => self.settings.ai.api_key.as_str(),
+            SettingsField::AiSystemPrompt => self.settings.ai.system_prompt.as_str(),
+            SettingsField::OpenRouterModelFilter => self.filters.openrouter_model_filter.as_str(),
+        }
+    }
+
+    pub(crate) fn settings_field_cursor(&self, field: SettingsField) -> usize {
+        match field {
+            SettingsField::GitUserName => self.settings_modal.git_user_name_cursor,
+            SettingsField::GitUserEmail => self.settings_modal.git_user_email_cursor,
+            SettingsField::GitDefaultBranch => self.settings_modal.git_default_branch_cursor,
+            SettingsField::AiModel => self.settings_modal.ai_model_cursor,
+            SettingsField::AiApiKey => self.settings_modal.ai_api_key_cursor,
+            SettingsField::AiSystemPrompt => self.settings_modal.ai_system_prompt_cursor,
+            SettingsField::OpenRouterModelFilter => {
+                self.settings_modal.openrouter_model_filter_cursor
+            }
+        }
+    }
+
+    pub(crate) fn settings_field_focused(&self, field: SettingsField, window: &Window) -> bool {
+        self.settings_modal.focus.is_focused(window)
+            && self.settings_modal.active_field == Some(field)
+    }
+
+    pub(crate) fn activate_settings_field(
+        &mut self,
+        field: SettingsField,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let cursor = self.settings_field_value(field).len();
+        self.settings_modal.active_field = Some(field);
+        self.set_settings_field_cursor(field, cursor);
+        window.focus(&self.settings_modal.focus);
+        cx.notify();
+    }
+
+    pub(crate) fn handle_settings_key(
+        &mut self,
+        event: &KeyDownEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "escape" {
+            self.close_settings_modal();
+            cx.notify();
+            return;
+        }
+
+        let Some(field) = self.settings_modal.active_field else {
+            return;
+        };
+
+        let multiline = matches!(field, SettingsField::AiSystemPrompt);
+
+        match field {
+            SettingsField::GitUserName => edit_string_field(
+                &mut self.repo.identity.user_name,
+                &mut self.settings_modal.git_user_name_cursor,
+                multiline,
+                event,
+                cx,
+            ),
+            SettingsField::GitUserEmail => edit_string_field(
+                &mut self.repo.identity.user_email,
+                &mut self.settings_modal.git_user_email_cursor,
+                multiline,
+                event,
+                cx,
+            ),
+            SettingsField::GitDefaultBranch => {
+                let value = self
+                    .repo
+                    .identity
+                    .default_branch
+                    .get_or_insert_with(String::new);
+                edit_string_field(
+                    value,
+                    &mut self.settings_modal.git_default_branch_cursor,
+                    multiline,
+                    event,
+                    cx,
+                );
+            }
+            SettingsField::AiModel => edit_string_field(
+                &mut self.settings.ai.model,
+                &mut self.settings_modal.ai_model_cursor,
+                multiline,
+                event,
+                cx,
+            ),
+            SettingsField::AiApiKey => edit_string_field(
+                &mut self.settings.ai.api_key,
+                &mut self.settings_modal.ai_api_key_cursor,
+                multiline,
+                event,
+                cx,
+            ),
+            SettingsField::AiSystemPrompt => edit_string_field(
+                &mut self.settings.ai.system_prompt,
+                &mut self.settings_modal.ai_system_prompt_cursor,
+                multiline,
+                event,
+                cx,
+            ),
+            SettingsField::OpenRouterModelFilter => edit_string_field(
+                &mut self.filters.openrouter_model_filter,
+                &mut self.settings_modal.openrouter_model_filter_cursor,
+                multiline,
+                event,
+                cx,
+            ),
+        }
+    }
+
+    fn set_settings_field_cursor(&mut self, field: SettingsField, cursor: usize) {
+        match field {
+            SettingsField::GitUserName => self.settings_modal.git_user_name_cursor = cursor,
+            SettingsField::GitUserEmail => self.settings_modal.git_user_email_cursor = cursor,
+            SettingsField::GitDefaultBranch => {
+                self.settings_modal.git_default_branch_cursor = cursor
+            }
+            SettingsField::AiModel => self.settings_modal.ai_model_cursor = cursor,
+            SettingsField::AiApiKey => self.settings_modal.ai_api_key_cursor = cursor,
+            SettingsField::AiSystemPrompt => self.settings_modal.ai_system_prompt_cursor = cursor,
+            SettingsField::OpenRouterModelFilter => {
+                self.settings_modal.openrouter_model_filter_cursor = cursor
             }
         }
     }
@@ -1704,16 +1889,38 @@ impl GitSparkApp {
                 )
         };
 
-        let sparkle_button = action_bar_btn("ai-generate-btn", IconName::Star)
+        let sparkle_button = div()
+            .id("ai-generate-btn")
+            .flex_shrink_0()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme::hover_bg()))
+            .rounded(px(3.0))
+            .w(px(18.0))
+            .h(px(17.0))
+            .items_center()
+            .justify_center()
+            .child(
+                svg()
+                    .path("icons/sparkles.svg")
+                    .size(px(14.0))
+                    .text_color(theme::text_muted()),
+            )
             .on_click(cx.listener(|app, _evt, _win, cx| {
                 app.generate_ai_commit(cx);
             }));
 
-        let settings_button = action_bar_btn("commit-settings-btn", IconName::Settings)
-            .on_click(cx.listener(|app, _evt, _win, cx| {
-                app.nav.show_settings = true;
-                cx.notify();
-            }));
+        let settings_button = action_bar_btn("commit-settings-btn", IconName::Settings).on_click(
+            cx.listener(|app, _evt, window, cx| {
+                app.open_settings_modal(Some(crate::ui::ui_state::SettingsSection::Ai), cx);
+                app.activate_settings_field(
+                    settings_modal::default_settings_field(
+                        crate::ui::ui_state::SettingsSection::Ai,
+                    ),
+                    window,
+                    cx,
+                );
+            }),
+        );
 
         // Action bar — sits below the description textarea
         let action_bar = h_flex()
@@ -1762,10 +1969,7 @@ impl GitSparkApp {
         );
 
         // Description + action bar grouped together (shared border)
-        let description_group = v_flex()
-            .w_full()
-            .child(description_field)
-            .child(action_bar);
+        let description_group = v_flex().w_full().child(description_field).child(action_bar);
 
         let commit_label = format!("Commit to {branch_name}");
 
@@ -1815,19 +2019,14 @@ impl GitSparkApp {
                 (diffs, sel)
             }
             SidebarTab::History => {
-                let diffs = self
-                    .selection
-                    .commit_diffs
-                    .as_deref()
-                    .unwrap_or(&[]);
+                let diffs = self.selection.commit_diffs.as_deref().unwrap_or(&[]);
                 let sel = self.selection.selected_commit_file.as_deref();
                 (diffs, sel)
             }
         };
 
         // Find the diff entry for the selected file.
-        let selected_diff = selected_file
-            .and_then(|path| diffs.iter().find(|d| d.path == path));
+        let selected_diff = selected_file.and_then(|path| diffs.iter().find(|d| d.path == path));
 
         // Show file list panel + diff when there are files to show
         if !diffs.is_empty() {
@@ -1846,12 +2045,9 @@ impl GitSparkApp {
                     )),
                 )
         } else {
-            h_resizable("workspace-panels").child(
-                resizable_panel().child(crate::ui::workspace::render_workspace(
-                    selected_file,
-                    selected_diff,
-                )),
-            )
+            h_resizable("workspace-panels").child(resizable_panel().child(
+                crate::ui::workspace::render_workspace(selected_file, selected_diff),
+            ))
         }
     }
 
@@ -1874,8 +2070,7 @@ impl GitSparkApp {
                 range
                     .map(|ix| {
                         let entry = &diffs_snapshot[ix];
-                        let is_selected =
-                            sel.as_deref() == Some(entry.path.as_str());
+                        let is_selected = sel.as_deref() == Some(entry.path.as_str());
                         let text_color = if is_selected {
                             gpui::white().into()
                         } else {
@@ -1886,10 +2081,7 @@ impl GitSparkApp {
                         let vh = view.clone();
 
                         h_flex()
-                            .id(SharedString::from(format!(
-                                "commit-file-{}",
-                                entry.path
-                            )))
+                            .id(SharedString::from(format!("commit-file-{}", entry.path)))
                             .w_full()
                             .h(theme::z(28.0))
                             .px(theme::z(10.0))
@@ -1923,16 +2115,13 @@ impl GitSparkApp {
                                 });
                             })
                             .child(
-                                div()
-                                    .flex_1()
-                                    .overflow_x_hidden()
-                                    .child(
-                                        div()
-                                            .text_size(theme::z(12.0))
-                                            .text_color(text_color)
-                                            .whitespace_nowrap()
-                                            .child(entry.path.clone()),
-                                    ),
+                                div().flex_1().overflow_x_hidden().child(
+                                    div()
+                                        .text_size(theme::z(12.0))
+                                        .text_color(text_color)
+                                        .whitespace_nowrap()
+                                        .child(entry.path.clone()),
+                                ),
                             )
                     })
                     .collect()
@@ -1961,10 +2150,7 @@ impl GitSparkApp {
                             .text_size(theme::z(12.0))
                             .text_color(theme::text_muted())
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!(
-                                "{} changed files",
-                                diffs.len()
-                            )),
+                            .child(format!("{} changed files", diffs.len())),
                     ),
             )
             .child(
@@ -1999,9 +2185,21 @@ impl GitSparkApp {
             .unwrap_or("origin");
 
         let actions: Vec<(NetworkAction, IconName, String)> = vec![
-            (NetworkAction::Fetch, IconName::Loader, format!("Fetch {remote_name}")),
-            (NetworkAction::Pull, IconName::ArrowDown, format!("Pull {remote_name}")),
-            (NetworkAction::Push, IconName::ArrowUp, format!("Push {remote_name}")),
+            (
+                NetworkAction::Fetch,
+                IconName::Loader,
+                format!("Fetch {remote_name}"),
+            ),
+            (
+                NetworkAction::Pull,
+                IconName::ArrowDown,
+                format!("Pull {remote_name}"),
+            ),
+            (
+                NetworkAction::Push,
+                IconName::ArrowUp,
+                format!("Push {remote_name}"),
+            ),
         ];
 
         let mut dropdown = v_flex()
@@ -2049,10 +2247,7 @@ impl GitSparkApp {
                     )
                     .on_click(cx.listener(move |app, _evt, _win, cx| {
                         app.nav.show_network_dropdown = false;
-                        app.handle_toolbar_action(
-                            ToolbarAction::RunNetworkAction(action),
-                            cx,
-                        );
+                        app.handle_toolbar_action(ToolbarAction::RunNetworkAction(action), cx);
                     })),
             );
         }
@@ -2228,9 +2423,7 @@ impl GitSparkApp {
                                 let display_name = repo_path
                                     .file_name()
                                     .map(|n| n.to_string_lossy().to_string())
-                                    .unwrap_or_else(|| {
-                                        repo_path.to_string_lossy().to_string()
-                                    });
+                                    .unwrap_or_else(|| repo_path.to_string_lossy().to_string());
                                 let is_current =
                                     repo_path.to_string_lossy() == current.to_string_lossy();
                                 let path_clone = repo_path.clone();
@@ -2261,16 +2454,13 @@ impl GitSparkApp {
                                     )
                                     // Repo name
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .overflow_x_hidden()
-                                            .child(
-                                                div()
-                                                    .text_size(theme::z(theme::FONT_SIZE))
-                                                    .text_color(theme::text_main())
-                                                    .whitespace_nowrap()
-                                                    .child(display_name),
-                                            ),
+                                        div().flex_1().overflow_x_hidden().child(
+                                            div()
+                                                .text_size(theme::z(theme::FONT_SIZE))
+                                                .text_color(theme::text_main())
+                                                .whitespace_nowrap()
+                                                .child(display_name),
+                                        ),
                                     )
                                     .on_click(move |_evt, _win, cx| {
                                         let p = path_clone.clone();
@@ -2289,17 +2479,13 @@ impl GitSparkApp {
         };
 
         // --- Section header: "Recent" ---
-        let section_header = div()
-            .w_full()
-            .px(px(10.0))
-            .py(px(8.0))
-            .child(
-                div()
-                    .text_size(theme::z(theme::FONT_SIZE))
-                    .text_color(theme::text_main())
-                    .font_weight(FontWeight::BOLD)
-                    .child("Recent"),
-            );
+        let section_header = div().w_full().px(px(10.0)).py(px(8.0)).child(
+            div()
+                .text_size(theme::z(theme::FONT_SIZE))
+                .text_color(theme::text_main())
+                .font_weight(FontWeight::BOLD)
+                .child("Recent"),
+        );
 
         // --- Fill the sidebar panel ---
         v_flex()
@@ -2355,13 +2541,10 @@ impl GitSparkApp {
         let current_branch = snapshot
             .map(|s| s.repo.current_branch.clone())
             .unwrap_or_else(|| "main".to_string());
-        let branches: Vec<BranchInfo> = snapshot
-            .map(|s| s.branches.clone())
-            .unwrap_or_default();
+        let branches: Vec<BranchInfo> = snapshot.map(|s| s.branches.clone()).unwrap_or_default();
 
         // Separate local branches only (skip remotes)
-        let local_branches: Vec<&BranchInfo> =
-            branches.iter().filter(|b| !b.is_remote).collect();
+        let local_branches: Vec<&BranchInfo> = branches.iter().filter(|b| !b.is_remote).collect();
 
         // Find default branch (current one)
         let default_branch = local_branches
@@ -2389,13 +2572,11 @@ impl GitSparkApp {
             }))
             // Branch icon
             .child(
-                div()
-                    .flex_shrink_0()
-                    .child(
-                        Icon::new(IconName::GitHub)
-                            .size(px(16.0))
-                            .text_color(theme::text_main()),
-                    )
+                div().flex_shrink_0().child(
+                    Icon::new(IconName::GitHub)
+                        .size(px(16.0))
+                        .text_color(theme::text_main()),
+                ),
             )
             // Text
             .child(
@@ -2522,17 +2703,13 @@ impl GitSparkApp {
             );
 
         // --- Section header ---
-        let section_header = div()
-            .w_full()
-            .px(px(10.0))
-            .py(px(8.0))
-            .child(
-                div()
-                    .text_size(theme::z(theme::FONT_SIZE))
-                    .text_color(theme::text_main())
-                    .font_weight(FontWeight::BOLD)
-                    .child("Default Branch"),
-            );
+        let section_header = div().w_full().px(px(10.0)).py(px(8.0)).child(
+            div()
+                .text_size(theme::z(theme::FONT_SIZE))
+                .text_color(theme::text_main())
+                .font_weight(FontWeight::BOLD)
+                .child("Default Branch"),
+        );
 
         // --- Branch list ---
         let branch_list = if local_branches.is_empty() {
@@ -2550,7 +2727,8 @@ impl GitSparkApp {
                     ),
             )
         } else {
-            let branches_owned: Vec<BranchInfo> = local_branches.iter().map(|b| (*b).clone()).collect();
+            let branches_owned: Vec<BranchInfo> =
+                local_branches.iter().map(|b| (*b).clone()).collect();
             let count = branches_owned.len();
             let view = cx.entity().clone();
             div().flex_1().child(
@@ -2595,16 +2773,13 @@ impl GitSparkApp {
                                     })
                                     // Branch name
                                     .child(
-                                        div()
-                                            .flex_1()
-                                            .overflow_x_hidden()
-                                            .child(
-                                                div()
-                                                    .text_size(theme::z(theme::FONT_SIZE))
-                                                    .text_color(theme::text_main())
-                                                    .whitespace_nowrap()
-                                                    .child(branch.name.clone()),
-                                            ),
+                                        div().flex_1().overflow_x_hidden().child(
+                                            div()
+                                                .text_size(theme::z(theme::FONT_SIZE))
+                                                .text_color(theme::text_main())
+                                                .whitespace_nowrap()
+                                                .child(branch.name.clone()),
+                                        ),
                                     )
                                     .on_click(move |_evt, _win, cx| {
                                         let name = name.clone();
@@ -2677,229 +2852,6 @@ impl GitSparkApp {
             .child(branch_list)
             .child(bottom_bar)
     }
-
-    // ------------------------------------------------------------------
-    // Settings overlay
-    // ------------------------------------------------------------------
-
-    fn render_settings_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        use crate::ui::ui_state::SettingsSection;
-
-        let section = self.nav.settings_section;
-
-        // Backdrop
-        let backdrop = div()
-            .id("settings-backdrop")
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full()
-            .bg(theme::with_alpha(theme::bg(), 0.6))
-            .on_click(cx.listener(|app, _evt, _win, cx| {
-                app.nav.show_settings = false;
-                cx.notify();
-            }));
-
-        // Left nav
-        let git_nav = div()
-            .id("settings-nav-git")
-            .w_full()
-            .px(px(12.0))
-            .py(px(8.0))
-            .cursor_pointer()
-            .rounded(px(4.0))
-            .bg(if section == SettingsSection::Git {
-                theme::surface_bg()
-            } else {
-                gpui::transparent_black()
-            })
-            .hover(|s| s.bg(theme::hover_bg()))
-            .on_click(cx.listener(|app, _evt, _win, cx| {
-                app.nav.settings_section = SettingsSection::Git;
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .text_size(theme::z(12.0))
-                    .text_color(if section == SettingsSection::Git {
-                        theme::text_main()
-                    } else {
-                        theme::text_muted()
-                    })
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("Git"),
-            );
-
-        let ai_nav = div()
-            .id("settings-nav-ai")
-            .w_full()
-            .px(px(12.0))
-            .py(px(8.0))
-            .cursor_pointer()
-            .rounded(px(4.0))
-            .bg(if section == SettingsSection::Ai {
-                theme::surface_bg()
-            } else {
-                gpui::transparent_black()
-            })
-            .hover(|s| s.bg(theme::hover_bg()))
-            .on_click(cx.listener(|app, _evt, _win, cx| {
-                app.nav.settings_section = SettingsSection::Ai;
-                cx.notify();
-            }))
-            .child(
-                div()
-                    .text_size(theme::z(12.0))
-                    .text_color(if section == SettingsSection::Ai {
-                        theme::text_main()
-                    } else {
-                        theme::text_muted()
-                    })
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("AI"),
-            );
-
-        let left_nav = v_flex()
-            .w(px(140.0))
-            .h_full()
-            .p(px(8.0))
-            .gap(px(4.0))
-            .border_r_1()
-            .border_color(theme::border())
-            .child(git_nav)
-            .child(ai_nav);
-
-        // Right content
-        let right_content: AnyElement = match section {
-            SettingsSection::Git => self.render_settings_git().into_any_element(),
-            SettingsSection::Ai => self.render_settings_ai().into_any_element(),
-        };
-
-        // Close button
-        let close_button = div()
-            .absolute()
-            .top(px(8.0))
-            .right(px(8.0))
-            .child(
-                div()
-                    .id("settings-close")
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme::surface_bg_alt()))
-                    .rounded(px(4.0))
-                    .px(px(6.0))
-                    .py(px(2.0))
-                    .child(
-                        Icon::new(IconName::Close)
-                            .size(px(16.0))
-                            .text_color(theme::text_muted()),
-                    )
-                    .on_click(cx.listener(|app, _evt, _win, cx| {
-                        app.nav.show_settings = false;
-                        cx.notify();
-                    })),
-            );
-
-        // Panel
-        let panel = div()
-            .absolute()
-            .top(px(80.0))
-            .left(px(80.0))
-            .right(px(80.0))
-            .bottom(px(80.0))
-            .bg(theme::panel_bg())
-            .border_1()
-            .border_color(theme::border())
-            .rounded(theme::z(theme::CORNER_RADIUS))
-            .overflow_hidden()
-            .child(
-                h_flex()
-                    .size_full()
-                    .child(left_nav)
-                    .child(right_content),
-            )
-            .child(close_button);
-
-        div().size_full().absolute().top_0().left_0().child(backdrop).child(panel)
-    }
-
-    fn render_settings_git(&self) -> impl IntoElement {
-        let user_name = self.repo.identity.user_name.clone();
-        let user_email = self.repo.identity.user_email.clone();
-
-        v_flex()
-            .flex_1()
-            .p(px(20.0))
-            .gap(px(16.0))
-            .child(
-                div()
-                    .text_size(px(16.0))
-                    .text_color(theme::text_main())
-                    .font_weight(FontWeight::BOLD)
-                    .child("Git Configuration"),
-            )
-            .child(self.render_settings_field("User Name", &user_name))
-            .child(self.render_settings_field("User Email", &user_email))
-    }
-
-    fn render_settings_ai(&self) -> impl IntoElement {
-        let provider = format!("{:?}", self.settings.ai.provider);
-        let model = self.settings.ai.model.clone();
-        let endpoint = self.settings.ai.endpoint.clone();
-
-        v_flex()
-            .flex_1()
-            .p(px(20.0))
-            .gap(px(16.0))
-            .child(
-                div()
-                    .text_size(px(16.0))
-                    .text_color(theme::text_main())
-                    .font_weight(FontWeight::BOLD)
-                    .child("AI Configuration"),
-            )
-            .child(self.render_settings_field("Provider", &provider))
-            .child(self.render_settings_field("Model", &model))
-            .child(self.render_settings_field("Endpoint", &endpoint))
-    }
-
-    fn render_settings_field(&self, label: &str, value: &str) -> impl IntoElement {
-        let display_value = if value.is_empty() {
-            "(not set)".to_string()
-        } else {
-            value.to_string()
-        };
-
-        v_flex()
-            .gap(px(4.0))
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(theme::text_muted())
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(label.to_string()),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .h(px(32.0))
-                    .rounded(px(4.0))
-                    .bg(theme::surface_bg())
-                    .border_1()
-                    .border_color(theme::border())
-                    .px(px(10.0))
-                    .items_center()
-                    .child(
-                        div()
-                            .text_size(theme::z(12.0))
-                            .text_color(if value.is_empty() {
-                                theme::text_muted()
-                            } else {
-                                theme::text_main()
-                            })
-                            .child(display_value),
-                    ),
-            )
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2934,4 +2886,93 @@ fn next_char_boundary(s: &str, pos: usize) -> usize {
         p += 1;
     }
     p
+}
+
+fn edit_string_field(
+    value: &mut String,
+    cursor: &mut usize,
+    multiline: bool,
+    event: &KeyDownEvent,
+    cx: &mut Context<GitSparkApp>,
+) {
+    let ks = &event.keystroke;
+
+    if ks.modifiers.secondary() {
+        match ks.key.as_str() {
+            "v" => {
+                if let Some(item) = cx.read_from_clipboard() {
+                    if let Some(text) = item.text() {
+                        let text = if multiline {
+                            text.to_string()
+                        } else {
+                            text.replace(['\n', '\r'], " ")
+                        };
+                        value.insert_str(*cursor, &text);
+                        *cursor += text.len();
+                        cx.notify();
+                    }
+                }
+            }
+            "a" => {
+                *cursor = value.len();
+                cx.notify();
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    match ks.key.as_str() {
+        "backspace" => {
+            if *cursor > 0 {
+                let new_pos = prev_char_boundary(value, *cursor);
+                value.drain(new_pos..*cursor);
+                *cursor = new_pos;
+                cx.notify();
+            }
+        }
+        "delete" => {
+            if *cursor < value.len() {
+                let end = next_char_boundary(value, *cursor);
+                value.drain(*cursor..end);
+                cx.notify();
+            }
+        }
+        "left" => {
+            if *cursor > 0 {
+                *cursor = prev_char_boundary(value, *cursor);
+                cx.notify();
+            }
+        }
+        "right" => {
+            if *cursor < value.len() {
+                *cursor = next_char_boundary(value, *cursor);
+                cx.notify();
+            }
+        }
+        "home" => {
+            *cursor = 0;
+            cx.notify();
+        }
+        "end" => {
+            *cursor = value.len();
+            cx.notify();
+        }
+        "enter" if multiline => {
+            value.insert(*cursor, '\n');
+            *cursor += 1;
+            cx.notify();
+        }
+        _ => {
+            if let Some(ref ch) = ks.key_char {
+                if !ks.modifiers.control
+                    && (multiline || (!ch.contains('\n') && !ch.contains('\r')))
+                {
+                    value.insert_str(*cursor, ch);
+                    *cursor += ch.len();
+                    cx.notify();
+                }
+            }
+        }
+    }
 }

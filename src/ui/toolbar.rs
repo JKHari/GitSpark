@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_component::divider::Divider;
-use gpui_component::{h_flex, v_flex, Icon, IconName};
+use gpui_component::{Icon, IconName, h_flex, v_flex};
 
 use crate::ui::theme;
 use crate::ui::theme::z;

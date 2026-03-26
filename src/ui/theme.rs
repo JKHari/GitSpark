@@ -16,11 +16,7 @@ pub fn set_zoom(factor: f32) {
 /// Get the current zoom factor.
 pub fn zoom() -> f32 {
     let bits = ZOOM_FACTOR_BITS.load(Ordering::Relaxed);
-    if bits == 0 {
-        1.0
-    } else {
-        f32::from_bits(bits)
-    }
+    if bits == 0 { 1.0 } else { f32::from_bits(bits) }
 }
 
 /// Scale a pixel value by the current zoom factor.
