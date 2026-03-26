@@ -1,5 +1,6 @@
 pub mod app;
 pub mod domain_state;
+pub mod history_context_menu;
 pub mod settings_modal;
 pub mod sidebar;
 pub mod status_bar;

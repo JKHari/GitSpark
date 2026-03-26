@@ -150,6 +150,16 @@ impl GitClient {
         self.snapshot(&repo_path)
     }
 
+    pub fn checkout_commit(&self, repo_path: &Path, oid: &str) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        let oid = self.verify_commit_oid(&repo_path, oid)?;
+
+        self.run_git(&repo_path, &["switch", "--detach", &oid])
+            .with_context(|| format!("failed to check out commit '{oid}'"))?;
+
+        self.snapshot(&repo_path)
+    }
+
     pub fn create_branch(&self, repo_path: &Path, branch_name: &str) -> Result<RepoSnapshot> {
         let repo_path = self.resolve_repo_root(repo_path)?;
         let branch_name = branch_name.trim();
@@ -191,6 +201,26 @@ impl GitClient {
         self.snapshot(&repo_path)
     }
 
+    pub fn revert_commit(&self, repo_path: &Path, oid: &str) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        let oid = self.verify_commit_oid(&repo_path, oid)?;
+
+        self.run_git(&repo_path, &["revert", "--no-edit", &oid])
+            .with_context(|| format!("failed to revert commit '{oid}'"))?;
+
+        self.snapshot(&repo_path)
+    }
+
+    pub fn cherry_pick_commit(&self, repo_path: &Path, oid: &str) -> Result<RepoSnapshot> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        let oid = self.verify_commit_oid(&repo_path, oid)?;
+
+        self.run_git(&repo_path, &["cherry-pick", &oid])
+            .with_context(|| format!("failed to cherry-pick commit '{oid}'"))?;
+
+        self.snapshot(&repo_path)
+    }
+
     pub fn merge_branch(&self, repo_path: &Path, branch_name: &str) -> Result<RepoSnapshot> {
         let repo_path = self.resolve_repo_root(repo_path)?;
         let branch_name = branch_name.trim();
@@ -202,6 +232,21 @@ impl GitClient {
             .with_context(|| format!("failed to merge branch '{branch_name}'"))?;
 
         self.snapshot(&repo_path)
+    }
+
+    pub fn github_commit_url(&self, repo_path: &Path, oid: &str) -> Result<Option<String>> {
+        let repo_path = self.resolve_repo_root(repo_path)?;
+        let oid = self.verify_commit_oid(&repo_path, oid)?;
+        let Some(remote_name) = self.read_primary_remote(&repo_path)? else {
+            return Ok(None);
+        };
+
+        let remote_url = self
+            .run_git(&repo_path, &["remote", "get-url", &remote_name])
+            .with_context(|| format!("failed to read remote URL for '{remote_name}'"))?;
+
+        Ok(normalize_github_remote_url(remote_url.trim())
+            .map(|base| format!("{base}/commit/{oid}")))
     }
 
     pub fn commit_all(&self, repo_path: &Path, message: &str) -> Result<RepoSnapshot> {
@@ -945,6 +990,40 @@ fn compact_status(xy: &str) -> String {
         "??".to_string()
     } else {
         compact
+    }
+}
+
+fn normalize_github_remote_url(remote_url: &str) -> Option<String> {
+    let remote_url = remote_url.trim();
+    if remote_url.is_empty() {
+        return None;
+    }
+
+    let repository = remote_url
+        .strip_prefix("https://github.com/")
+        .or_else(|| remote_url.strip_prefix("http://github.com/"))
+        .map(str::to_string)
+        .or_else(|| {
+            remote_url
+                .strip_prefix("git@github.com:")
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            remote_url
+                .strip_prefix("ssh://git@github.com/")
+                .map(str::to_string)
+        })
+        .or_else(|| {
+            remote_url
+                .strip_prefix("git://github.com/")
+                .map(str::to_string)
+        })?;
+
+    let repository = repository.trim_end_matches(".git").trim_matches('/');
+    if repository.is_empty() {
+        None
+    } else {
+        Some(format!("https://github.com/{repository}"))
     }
 }
 

@@ -22,6 +22,7 @@ use crate::storage::{push_recent_repo, save_settings};
 use crate::ui::domain_state::{
     CommitState, NetworkAction, NetworkState, RepoState, SelectionState,
 };
+use crate::ui::history_context_menu::HistoryContextMenuAction;
 use crate::ui::settings_modal::{self, SettingsField, SettingsModalState};
 use crate::ui::theme;
 use crate::ui::ui_state::{FilterState, MessageState, NavState, OpenRouterModelsState, SidebarTab};
@@ -48,6 +49,8 @@ enum AppEvent {
     AiCommitGenerated(Result<CommitSuggestion, String>),
     OpenRouterModelsLoaded(Result<Vec<RemoteModelOption>, String>),
     CommitDiffLoaded(String, Result<Vec<DiffEntry>, String>),
+    RepoOperationCompleted(Result<RepoSnapshot, String>, String, String),
+    CommitDiffCopied(String, Result<String, String>),
 }
 
 // ---------------------------------------------------------------------------
@@ -363,6 +366,24 @@ impl GitSparkApp {
                 AppEvent::CommitDiffLoaded(_, Err(err)) => {
                     self.messages.error_message = format!("Failed to load commit details: {err}");
                 }
+                AppEvent::RepoOperationCompleted(Ok(snapshot), _action_label, success_message) => {
+                    self.adopt_snapshot(snapshot);
+                    self.messages.status_message = success_message;
+                    self.messages.error_message.clear();
+                }
+                AppEvent::RepoOperationCompleted(Err(err), action_label, _success_message) => {
+                    self.messages.error_message = format!("{action_label} failed: {err}");
+                }
+                AppEvent::CommitDiffCopied(oid, Ok(diff_text)) => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(diff_text));
+                    self.messages.status_message =
+                        format!("Copied diff for {}.", short_commit_label(&oid));
+                    self.messages.error_message.clear();
+                }
+                AppEvent::CommitDiffCopied(oid, Err(err)) => {
+                    self.messages.error_message =
+                        format!("Failed to copy diff for {}: {err}", short_commit_label(&oid));
+                }
             }
         }
         // Only trigger a re-render if we actually processed events.
@@ -376,6 +397,7 @@ impl GitSparkApp {
     // ------------------------------------------------------------------
 
     pub fn handle_toolbar_action(&mut self, action: ToolbarAction, cx: &mut Context<Self>) {
+        self.close_history_context_menu();
         match action {
             ToolbarAction::ToggleRepoSelector => {
                 self.nav.show_repo_selector = !self.nav.show_repo_selector;
@@ -401,6 +423,7 @@ impl GitSparkApp {
     // ------------------------------------------------------------------
 
     pub fn handle_sidebar_action(&mut self, action: SidebarAction, cx: &mut Context<Self>) {
+        self.close_history_context_menu();
         match action {
             SidebarAction::OpenRepoDialog => self.open_repo_dialog(cx),
             SidebarAction::OpenRepo(path) => self.open_repo_with_notify(path, cx),
@@ -901,6 +924,155 @@ impl GitSparkApp {
         cx.notify();
     }
 
+    pub(crate) fn close_history_context_menu(&mut self) {}
+
+    pub(crate) fn handle_history_context_menu_action_for_oid(
+        &mut self,
+        oid: String,
+        action: HistoryContextMenuAction,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            HistoryContextMenuAction::CheckoutCommit => {
+                let short = short_commit_label(&oid).to_string();
+                self.run_commit_repo_action(
+                    oid,
+                    "Checkout commit".to_string(),
+                    format!("Checked out commit {short}."),
+                    GitClient::checkout_commit,
+                    cx,
+                );
+            }
+            HistoryContextMenuAction::RevertChangesInCommit => {
+                let short = short_commit_label(&oid).to_string();
+                self.run_commit_repo_action(
+                    oid,
+                    "Revert commit".to_string(),
+                    format!("Reverted commit {short}."),
+                    GitClient::revert_commit,
+                    cx,
+                );
+            }
+            HistoryContextMenuAction::CherryPickCommit => {
+                let short = short_commit_label(&oid).to_string();
+                self.run_commit_repo_action(
+                    oid,
+                    "Cherry-pick commit".to_string(),
+                    format!("Cherry-picked commit {short}."),
+                    GitClient::cherry_pick_commit,
+                    cx,
+                );
+            }
+            HistoryContextMenuAction::CopySha => {
+                cx.write_to_clipboard(ClipboardItem::new_string(oid.clone()));
+                self.messages.status_message =
+                    format!("Copied SHA {}.", short_commit_label(&oid));
+                self.messages.error_message.clear();
+            }
+            HistoryContextMenuAction::CopyDiff => self.copy_commit_diff(&oid, cx),
+            HistoryContextMenuAction::ViewOnGitHub => self.view_commit_on_github(&oid),
+            HistoryContextMenuAction::ResetToCommit
+            | HistoryContextMenuAction::ReorderCommit
+            | HistoryContextMenuAction::CreateBranchFromCommit
+            | HistoryContextMenuAction::CreateTag
+            | HistoryContextMenuAction::CopyTag => {}
+        }
+
+        cx.notify();
+    }
+
+    fn run_commit_repo_action(
+        &mut self,
+        oid: String,
+        action_label: String,
+        success_message: String,
+        operation: fn(&GitClient, &Path, &str) -> anyhow::Result<RepoSnapshot>,
+        _cx: &mut Context<Self>,
+    ) {
+        let Some(path) = self.repo_path().map(PathBuf::from) else {
+            self.messages.error_message = "No repository selected.".to_string();
+            return;
+        };
+
+        self.messages.status_message = format!("{action_label} {}...", short_commit_label(&oid));
+        self.messages.error_message.clear();
+
+        let tx = self.event_tx.clone();
+        let action_label_for_event = action_label.clone();
+
+        thread::spawn(move || {
+            let git = GitClient::new();
+            let res = operation(&git, &path, &oid).map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::RepoOperationCompleted(
+                res,
+                action_label_for_event,
+                success_message,
+            ));
+        });
+    }
+
+    fn copy_commit_diff(&mut self, oid: &str, cx: &mut Context<Self>) {
+        if self.selection.selected_commit.as_deref() == Some(oid)
+            && let Some(diffs) = self.selection.commit_diffs.as_ref()
+        {
+            cx.write_to_clipboard(ClipboardItem::new_string(commit_diff_clipboard_text(diffs)));
+            self.messages.status_message =
+                format!("Copied diff for {}.", short_commit_label(oid));
+            self.messages.error_message.clear();
+            return;
+        }
+
+        let Some(path) = self.repo_path().map(PathBuf::from) else {
+            self.messages.error_message = "No repository selected.".to_string();
+            return;
+        };
+
+        let oid = oid.to_string();
+        self.messages.status_message = format!("Copying diff for {}...", short_commit_label(&oid));
+        self.messages.error_message.clear();
+
+        let tx = self.event_tx.clone();
+        thread::spawn(move || {
+            let git = GitClient::new();
+            let res = git
+                .get_commit_diff(&path, &oid)
+                .map(|diffs| commit_diff_clipboard_text(&diffs))
+                .map_err(|e| e.to_string());
+            let _ = tx.send(AppEvent::CommitDiffCopied(oid, res));
+        });
+
+        cx.notify();
+    }
+
+    fn view_commit_on_github(&mut self, oid: &str) {
+        let Some(path) = self.repo_path().map(PathBuf::from) else {
+            self.messages.error_message = "No repository selected.".to_string();
+            return;
+        };
+
+        match self.git.github_commit_url(&path, oid) {
+            Ok(Some(url)) => match open::that_detached(&url) {
+                Ok(_) => {
+                    self.messages.status_message =
+                        format!("Opened commit {} on GitHub.", short_commit_label(oid));
+                    self.messages.error_message.clear();
+                }
+                Err(err) => {
+                    self.messages.error_message =
+                        format!("Failed to open commit {} on GitHub: {err}", short_commit_label(oid));
+                }
+            },
+            Ok(None) => {
+                self.messages.error_message =
+                    "This repository does not have a GitHub remote URL.".to_string();
+            }
+            Err(err) => {
+                self.messages.error_message =
+                    format!("Failed to resolve GitHub URL for {}: {err}", short_commit_label(oid));
+            }
+        }
+    }
+
     // ------------------------------------------------------------------
     // File operations
     // ------------------------------------------------------------------
@@ -1068,6 +1240,7 @@ impl GitSparkApp {
     fn adopt_snapshot(&mut self, snapshot: RepoSnapshot) {
         let previous_commit = self.selection.selected_commit.clone();
         let current_branch = snapshot.repo.current_branch.clone();
+        self.close_history_context_menu();
         self.selection.selected_change = snapshot.changes.first().map(|change| change.path.clone());
         self.repo.branch_target = current_branch;
         self.repo.merge_target = snapshot
@@ -1199,11 +1372,22 @@ impl Render for GitSparkApp {
         theme::set_zoom(zoom_factor);
         window.set_rem_size(px(self.rem_size));
 
+        // macOS titlebar spacer (traffic lights sit here)
+        let titlebar_height = if cfg!(target_os = "macos") { 38.0 } else { 0.0 };
+
         let mut root = v_flex()
             .size_full()
+            .relative()
             .bg(theme::bg())
             .font_family(".SystemUIFont")
             .text_size(theme::z(theme::FONT_SIZE))
+            .child(
+                div()
+                    .w_full()
+                    .h(px(titlebar_height))
+                    .flex_shrink_0()
+                    .bg(theme::panel_bg()), // slightly lighter than bg for titlebar strip
+            )
             .child(
                 h_resizable("main-panels")
                     .child(
@@ -1288,6 +1472,8 @@ impl GitSparkApp {
             self.nav.show_branch_selector,
             false,
         )
+        .flex_none()
+        .w(px(200.0))
         .on_click(cx.listener(|app, _evt, _win, cx| {
             app.nav.show_branch_selector = !app.nav.show_branch_selector;
             app.nav.show_repo_selector = false;
@@ -1334,7 +1520,8 @@ impl GitSparkApp {
             .child(toolbar::vertical_divider())
             .child(
                 div()
-                    .flex_1()
+                    .flex_none()
+                    .w(px(200.0))
                     .h_full()
                     .relative()
                     .child(
@@ -1552,6 +1739,7 @@ impl GitSparkApp {
     pub(crate) fn close_settings_modal(&mut self) {
         self.nav.show_settings = false;
         self.settings_modal.active_field = None;
+        self.close_history_context_menu();
     }
 
     fn open_settings_modal(
@@ -1563,6 +1751,7 @@ impl GitSparkApp {
             self.nav.settings_section = section;
         }
 
+        self.close_history_context_menu();
         self.nav.show_settings = true;
         let field = if self.nav.settings_section == crate::ui::ui_state::SettingsSection::Ai
             && self.settings.ai.provider == AiProvider::OpenRouter
@@ -2857,6 +3046,28 @@ impl GitSparkApp {
 // ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
+
+fn short_commit_label(oid: &str) -> &str {
+    &oid[..oid.len().min(7)]
+}
+
+fn commit_diff_clipboard_text(diffs: &[DiffEntry]) -> String {
+    diffs.iter()
+        .map(|entry| {
+            let body = entry.diff.trim_end();
+            if body.starts_with("diff --git ")
+                || body.starts_with("--- ")
+                || body.starts_with("Binary file")
+                || body.starts_with("Binary files")
+            {
+                body.to_string()
+            } else {
+                format!("FILE: {}\n{body}", entry.path)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
 
 fn shell_escape(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\"'\"'"))

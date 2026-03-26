@@ -4,6 +4,7 @@ use gpui_component::{Icon, IconName, Sizable, h_flex, v_flex};
 
 use crate::models::{ChangeEntry, CommitInfo};
 use crate::ui::app::GitSparkApp;
+use crate::ui::history_context_menu;
 use crate::ui::theme;
 use crate::ui::theme::z;
 use crate::ui::ui_state::SidebarTab;
@@ -131,17 +132,21 @@ pub fn render_sidebar_interactive(
                                     let commit = &history_snapshot[ix];
                                     let is_selected = sel.as_deref() == Some(commit.oid.as_str());
                                     let oid = commit.oid.clone();
-                                    let vh = view.clone();
-                                    render_history_row(commit, is_selected)
+                                    let click_view = view.clone();
+                                    history_context_menu::bind_history_context_click(
+                                        render_history_row(commit, is_selected)
                                         .id(SharedString::from(format!("commit-{}", commit.oid)))
                                         .cursor_pointer()
                                         .hover(|s| s.bg(theme::hover_bg()))
                                         .on_click(move |_evt, _win, cx| {
                                             let oid = oid.clone();
-                                            vh.update(cx, |app, cx| {
+                                            click_view.update(cx, |app, cx| {
                                                 app.select_commit(oid, cx);
                                             });
-                                        })
+                                        }),
+                                        view.clone(),
+                                        commit.oid.clone(),
+                                    )
                                         .into_any_element()
                                 })
                                 .collect()
