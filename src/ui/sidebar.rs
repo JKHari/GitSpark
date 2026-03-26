@@ -6,6 +6,7 @@ use gpui_component::{h_flex, v_flex, Icon, IconName, Sizable};
 use crate::models::{ChangeEntry, CommitInfo};
 use crate::ui::app::GitSparkApp;
 use crate::ui::theme;
+use crate::ui::theme::z;
 use crate::ui::ui_state::SidebarTab;
 
 // ---------------------------------------------------------------------------
@@ -186,11 +187,11 @@ fn render_interactive_tab_bar(
         // Inline counter pill matching GitHub Desktop's --tab-bar-count style
         changes_tab = changes_tab.suffix(
             div()
-                .px(px(6.0))
-                .py(px(1.0))
-                .rounded(px(10.0))
+                .px(z(6.0))
+                .py(z(1.0))
+                .rounded(z(10.0))
                 .bg(theme::toolbar_badge_bg())
-                .text_size(px(theme::FONT_SIZE_XS))
+                .text_size(z(theme::FONT_SIZE_XS))
                 .text_color(theme::text_main())
                 .child(change_count.to_string()),
         );
@@ -238,13 +239,13 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
 
     h_flex()
         .w_full()
-        .h(px(CHANGE_ROW_HEIGHT))
-        .px(px(10.0))
+        .h(z(CHANGE_ROW_HEIGHT))
+        .px(z(10.0))
         .items_center()
         .bg(bg)
         .border_b_1()
         .border_color(theme::toolbar_button_border())
-        .gap(px(5.0))
+        .gap(z(5.0))
         .child(checkbox)
         .child(
             div()
@@ -252,7 +253,7 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
                 .overflow_x_hidden()
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(z(12.0))
                         .text_color(text_color)
                         .whitespace_nowrap()
                         .child(change.path.clone()),
@@ -265,9 +266,9 @@ fn render_checkbox(checked: bool) -> Div {
     let size = 14.0;
     if checked {
         div()
-            .w(px(size))
-            .h(px(size))
-            .rounded(px(3.0))
+            .w(z(size))
+            .h(z(size))
+            .rounded(z(3.0))
             .bg(theme::accent())
             .border_1()
             .border_color(theme::accent())
@@ -276,14 +277,14 @@ fn render_checkbox(checked: bool) -> Div {
             .justify_center()
             .child(
                 Icon::new(IconName::Check)
-                    .size(px(10.0))
+                    .size(z(10.0))
                     .text_color(gpui::white()),
             )
     } else {
         div()
-            .w(px(size))
-            .h(px(size))
-            .rounded(px(3.0))
+            .w(z(size))
+            .h(z(size))
+            .rounded(z(3.0))
             .border_1()
             .border_color(theme::text_muted())
             .flex_shrink_0()
@@ -310,14 +311,14 @@ pub fn render_history_row(commit: &CommitInfo, selected: bool) -> Div {
     let meta = format!("{} \u{00b7} {}", commit.author_name, commit.date);
 
     let mut summary_row = h_flex()
-        .gap(px(6.0))
+        .gap(z(6.0))
         .child(
             div()
                 .flex_1()
                 .overflow_x_hidden()
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .text_size(z(12.0))
                         .text_color(summary_color)
                         .font_weight(FontWeight::SEMIBOLD)
                         .whitespace_nowrap()
@@ -335,16 +336,16 @@ pub fn render_history_row(commit: &CommitInfo, selected: bool) -> Div {
 
     v_flex()
         .w_full()
-        .px(px(10.0))
-        .py(px(6.0))
+        .px(z(10.0))
+        .py(z(6.0))
         .bg(bg)
         .border_b_1()
         .border_color(theme::toolbar_button_border())
-        .gap(px(2.0))
+        .gap(z(2.0))
         .child(summary_row)
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(z(11.0))
                 .text_color(theme::text_muted())
                 .whitespace_nowrap()
                 .child(meta),
@@ -358,12 +359,12 @@ pub fn render_history_row(commit: &CommitInfo, selected: bool) -> Div {
 fn render_empty_state(message: &str) -> Div {
     div()
         .w_full()
-        .py(px(20.0))
+        .py(z(20.0))
         .items_center()
         .justify_center()
         .child(
             div()
-                .text_size(px(12.0))
+                .text_size(z(12.0))
                 .text_color(theme::text_muted())
                 .child(message.to_string()),
         )

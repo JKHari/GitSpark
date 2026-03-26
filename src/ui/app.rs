@@ -115,6 +115,17 @@ impl NotifySender {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Zoom actions
+// ---------------------------------------------------------------------------
+
+actions!(gitspark, [ZoomIn, ZoomOut, ZoomReset]);
+
+const DEFAULT_REM_SIZE: f32 = 14.0;
+const ZOOM_STEP: f32 = 1.0;
+const ZOOM_MIN: f32 = 10.0;
+const ZOOM_MAX: f32 = 24.0;
+
 pub struct GitSparkApp {
     git: GitClient,
     pub settings: AppSettings,
@@ -134,6 +145,8 @@ pub struct GitSparkApp {
     description_focus: FocusHandle,
     summary_cursor: usize,
     description_cursor: usize,
+    // Zoom
+    rem_size: f32,
 }
 
 impl GitSparkApp {
@@ -165,7 +178,36 @@ impl GitSparkApp {
             description_focus: cx.focus_handle(),
             summary_cursor: 0,
             description_cursor: 0,
+            rem_size: DEFAULT_REM_SIZE,
         };
+
+        // Register zoom actions at the window level so they work regardless of focus
+        cx.observe_keystrokes(|app, keystroke, _window, cx| {
+            let ks = &keystroke.keystroke;
+            if ks.modifiers.secondary() && !ks.modifiers.shift {
+                match ks.key.as_str() {
+                    "=" | "+" => {
+                        app.rem_size = (app.rem_size + ZOOM_STEP).min(ZOOM_MAX);
+                        let pct = ((app.rem_size / DEFAULT_REM_SIZE) * 100.0).round() as i32;
+                        app.messages.status_message = format!("Zoom: {pct}%");
+                        cx.notify();
+                    }
+                    "-" => {
+                        app.rem_size = (app.rem_size - ZOOM_STEP).max(ZOOM_MIN);
+                        let pct = ((app.rem_size / DEFAULT_REM_SIZE) * 100.0).round() as i32;
+                        app.messages.status_message = format!("Zoom: {pct}%");
+                        cx.notify();
+                    }
+                    "0" => {
+                        app.rem_size = DEFAULT_REM_SIZE;
+                        app.messages.status_message = "Zoom: 100%".to_string();
+                        cx.notify();
+                    }
+                    _ => {}
+                }
+            }
+        })
+        .detach();
 
         if let Some(last_repo) = settings.recent_repos.first() {
             app.open_repo(last_repo.clone());
@@ -1135,11 +1177,16 @@ impl Render for GitSparkApp {
                 None
             });
 
+        // Apply zoom level
+        let zoom_factor = self.rem_size / DEFAULT_REM_SIZE;
+        theme::set_zoom(zoom_factor);
+        window.set_rem_size(px(self.rem_size));
+
         let mut root = v_flex()
             .size_full()
             .bg(theme::bg())
-            .font_family(".SystemUIFont") // San Francisco on macOS, matches gpui-component default
-            .text_size(px(theme::FONT_SIZE))
+            .font_family(".SystemUIFont")
+            .text_size(theme::z(theme::FONT_SIZE))
             .child(
                 h_resizable("main-panels")
                     .child(
@@ -1208,7 +1255,7 @@ impl GitSparkApp {
 
         let left = h_flex()
             .w_full()
-            .h(px(theme::TOOLBAR_HEIGHT))
+            .h(theme::z(theme::TOOLBAR_HEIGHT))
             .flex_shrink_0()
             .bg(theme::toolbar_bg())
             .border_b_1()
@@ -1268,7 +1315,7 @@ impl GitSparkApp {
 
         let right = h_flex()
             .w_full()
-            .h(px(theme::TOOLBAR_HEIGHT))
+            .h(theme::z(theme::TOOLBAR_HEIGHT))
             .flex_shrink_0()
             .bg(theme::toolbar_bg())
             .border_b_1()
@@ -1608,14 +1655,14 @@ impl GitSparkApp {
         if multiline {
             // Description: top corners rounded, bottom corners flat (action bar attaches)
             field = field
-                .rounded_t(px(theme::CORNER_RADIUS))
+                .rounded_t(theme::z(theme::CORNER_RADIUS))
                 .rounded_b_none()
                 .border_b_0()
                 .py(px(6.0))
                 .overflow_hidden();
         } else {
             // Summary: fully rounded
-            field = field.rounded(px(theme::CORNER_RADIUS)).items_center();
+            field = field.rounded(theme::z(theme::CORNER_RADIUS)).items_center();
         }
 
         if is_summary {
@@ -1679,7 +1726,7 @@ impl GitSparkApp {
             .border_1()
             .border_t_0()
             .border_color(theme::surface_bg_alt())
-            .rounded_b(px(theme::CORNER_RADIUS))
+            .rounded_b(theme::z(theme::CORNER_RADIUS))
             .child(sparkle_button)
             .child(
                 div()
@@ -1948,13 +1995,13 @@ impl GitSparkApp {
 
         let mut dropdown = v_flex()
             .absolute()
-            .top(px(theme::TOOLBAR_HEIGHT))
+            .top(theme::z(theme::TOOLBAR_HEIGHT))
             .right_0()
             .w(px(220.0))
             .bg(theme::panel_bg())
             .border_1()
             .border_color(theme::toolbar_button_border())
-            .rounded_b(px(theme::CORNER_RADIUS))
+            .rounded_b(theme::z(theme::CORNER_RADIUS))
             .shadow_lg();
 
         for (action, icon, label) in actions {
@@ -1985,7 +2032,7 @@ impl GitSparkApp {
                     .child(
                         div()
                             .flex_1()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_main())
                             .child(label),
                     )
@@ -2015,7 +2062,7 @@ impl GitSparkApp {
         let header = h_flex()
             .id("repo-selector-header")
             .w_full()
-            .h(px(theme::TOOLBAR_HEIGHT))
+            .h(theme::z(theme::TOOLBAR_HEIGHT))
             .flex_shrink_0()
             .bg(theme::toolbar_bg())
             .border_b_1()
@@ -2044,13 +2091,13 @@ impl GitSparkApp {
                     .overflow_hidden()
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE_SM))
+                            .text_size(theme::z(theme::FONT_SIZE_SM))
                             .text_color(theme::text_muted())
                             .child("Current Repository"),
                     )
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_main())
                             .font_weight(FontWeight::SEMIBOLD)
                             .overflow_x_hidden()
@@ -2083,7 +2130,7 @@ impl GitSparkApp {
                     .px(px(8.0))
                     .items_center()
                     .gap(px(6.0))
-                    .rounded(px(theme::CORNER_RADIUS))
+                    .rounded(theme::z(theme::CORNER_RADIUS))
                     .border_1()
                     .border_color(theme::accent())
                     .bg(theme::bg())
@@ -2094,7 +2141,7 @@ impl GitSparkApp {
                     )
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_muted())
                             .child("Filter"),
                     ),
@@ -2108,7 +2155,7 @@ impl GitSparkApp {
                     .px(px(12.0))
                     .items_center()
                     .justify_center()
-                    .rounded(px(theme::CORNER_RADIUS))
+                    .rounded(theme::z(theme::CORNER_RADIUS))
                     .bg(theme::surface_bg())
                     .border_1()
                     .border_color(theme::surface_bg_alt())
@@ -2123,7 +2170,7 @@ impl GitSparkApp {
                             .gap(px(4.0))
                             .child(
                                 div()
-                                    .text_size(px(theme::FONT_SIZE))
+                                    .text_size(theme::z(theme::FONT_SIZE))
                                     .text_color(theme::text_main())
                                     .child("Add"),
                             )
@@ -2208,7 +2255,7 @@ impl GitSparkApp {
                                             .overflow_x_hidden()
                                             .child(
                                                 div()
-                                                    .text_size(px(theme::FONT_SIZE))
+                                                    .text_size(theme::z(theme::FONT_SIZE))
                                                     .text_color(theme::text_main())
                                                     .whitespace_nowrap()
                                                     .child(display_name),
@@ -2237,7 +2284,7 @@ impl GitSparkApp {
             .py(px(8.0))
             .child(
                 div()
-                    .text_size(px(theme::FONT_SIZE))
+                    .text_size(theme::z(theme::FONT_SIZE))
                     .text_color(theme::text_main())
                     .font_weight(FontWeight::BOLD)
                     .child("Recent"),
@@ -2264,7 +2311,7 @@ impl GitSparkApp {
         let backdrop = div()
             .id("branch-selector-backdrop")
             .absolute()
-            .top(px(theme::TOOLBAR_HEIGHT))
+            .top(theme::z(theme::TOOLBAR_HEIGHT))
             .left_0()
             .w_full()
             .bottom_0()
@@ -2277,7 +2324,7 @@ impl GitSparkApp {
         let panel = self
             .render_branch_selector_panel(cx)
             .absolute()
-            .top(px(theme::TOOLBAR_HEIGHT))
+            .top(theme::z(theme::TOOLBAR_HEIGHT))
             .left_0()
             .w(px(300.0))
             .bottom_0()
@@ -2316,7 +2363,7 @@ impl GitSparkApp {
         let header = h_flex()
             .id("branch-selector-header")
             .w_full()
-            .h(px(theme::TOOLBAR_HEIGHT))
+            .h(theme::z(theme::TOOLBAR_HEIGHT))
             .flex_shrink_0()
             .bg(theme::toolbar_bg())
             .border_b_1()
@@ -2347,13 +2394,13 @@ impl GitSparkApp {
                     .overflow_hidden()
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE_SM))
+                            .text_size(theme::z(theme::FONT_SIZE_SM))
                             .text_color(theme::text_muted())
                             .child("Current Branch"),
                     )
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_main())
                             .font_weight(FontWeight::SEMIBOLD)
                             .overflow_x_hidden()
@@ -2386,7 +2433,7 @@ impl GitSparkApp {
                     .border_color(theme::accent())
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_main())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("Branches"),
@@ -2400,7 +2447,7 @@ impl GitSparkApp {
                     .justify_center()
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_muted())
                             .child("Pull Requests"),
                     ),
@@ -2421,7 +2468,7 @@ impl GitSparkApp {
                     .px(px(8.0))
                     .items_center()
                     .gap(px(6.0))
-                    .rounded(px(theme::CORNER_RADIUS))
+                    .rounded(theme::z(theme::CORNER_RADIUS))
                     .border_1()
                     .border_color(theme::accent())
                     .bg(theme::bg())
@@ -2432,7 +2479,7 @@ impl GitSparkApp {
                     )
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_muted())
                             .child("Filter"),
                     ),
@@ -2445,7 +2492,7 @@ impl GitSparkApp {
                     .px(px(12.0))
                     .items_center()
                     .justify_center()
-                    .rounded(px(theme::CORNER_RADIUS))
+                    .rounded(theme::z(theme::CORNER_RADIUS))
                     .bg(theme::surface_bg())
                     .border_1()
                     .border_color(theme::surface_bg_alt())
@@ -2457,7 +2504,7 @@ impl GitSparkApp {
                     }))
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_main())
                             .child("New Branch"),
                     ),
@@ -2470,7 +2517,7 @@ impl GitSparkApp {
             .py(px(8.0))
             .child(
                 div()
-                    .text_size(px(theme::FONT_SIZE))
+                    .text_size(theme::z(theme::FONT_SIZE))
                     .text_color(theme::text_main())
                     .font_weight(FontWeight::BOLD)
                     .child("Default Branch"),
@@ -2542,7 +2589,7 @@ impl GitSparkApp {
                                             .overflow_x_hidden()
                                             .child(
                                                 div()
-                                                    .text_size(px(theme::FONT_SIZE))
+                                                    .text_size(theme::z(theme::FONT_SIZE))
                                                     .text_color(theme::text_main())
                                                     .whitespace_nowrap()
                                                     .child(branch.name.clone()),
@@ -2596,13 +2643,13 @@ impl GitSparkApp {
                     .gap(px(4.0))
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_muted())
                             .child("Choose a branch to merge into"),
                     )
                     .child(
                         div()
-                            .text_size(px(theme::FONT_SIZE))
+                            .text_size(theme::z(theme::FONT_SIZE))
                             .text_color(theme::text_main())
                             .font_weight(FontWeight::BOLD)
                             .child(default_branch),
@@ -2751,7 +2798,7 @@ impl GitSparkApp {
             .bg(theme::panel_bg())
             .border_1()
             .border_color(theme::border())
-            .rounded(px(theme::CORNER_RADIUS))
+            .rounded(theme::z(theme::CORNER_RADIUS))
             .overflow_hidden()
             .child(
                 h_flex()

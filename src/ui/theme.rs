@@ -1,4 +1,32 @@
-use gpui::Hsla;
+use std::sync::atomic::{AtomicU32, Ordering};
+
+use gpui::{Hsla, Pixels, px};
+
+// ---------------------------------------------------------------------------
+// Zoom — global scale factor for layout
+// ---------------------------------------------------------------------------
+
+static ZOOM_FACTOR_BITS: AtomicU32 = AtomicU32::new(0); // initialized to 1.0 below
+
+/// Set the global zoom factor (called from app on zoom change).
+pub fn set_zoom(factor: f32) {
+    ZOOM_FACTOR_BITS.store(factor.to_bits(), Ordering::Relaxed);
+}
+
+/// Get the current zoom factor.
+pub fn zoom() -> f32 {
+    let bits = ZOOM_FACTOR_BITS.load(Ordering::Relaxed);
+    if bits == 0 {
+        1.0
+    } else {
+        f32::from_bits(bits)
+    }
+}
+
+/// Scale a pixel value by the current zoom factor.
+pub fn z(val: f32) -> Pixels {
+    px(val * zoom())
+}
 
 // ---------------------------------------------------------------------------
 // Colors — GitHub Dark theme
