@@ -98,7 +98,7 @@ pub fn diff_add_bg() -> Hsla {
 }
 
 pub fn diff_add_fg() -> Hsla {
-    gpui::rgb(0x03c969).into()
+    gpui::rgb(0xc9d1d9).into() // --diff-add-text-color: var(--diff-text-color)
 }
 
 pub fn diff_del_bg() -> Hsla {
@@ -106,7 +106,7 @@ pub fn diff_del_bg() -> Hsla {
 }
 
 pub fn diff_del_fg() -> Hsla {
-    gpui::rgb(0xda3633).into()
+    gpui::rgb(0xffd7d5).into() // --diff-delete-text-color: $red-100 (soft pink)
 }
 
 pub fn diff_hunk_bg() -> Hsla {
@@ -134,7 +134,7 @@ pub fn commit_button_text() -> Hsla {
 }
 
 pub fn line_num_color() -> Hsla {
-    gpui::rgb(0x484f58).into()
+    gpui::rgb(0x8b949e).into() // --diff-line-number-color: var(--text-secondary-color)
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +203,9 @@ pub const CORNER_RADIUS: f32 = 6.0;
 pub const CORNER_RADIUS_SM: f32 = 4.0;
 pub const SECTION_PADDING: f32 = 12.0;
 pub const ITEM_GAP: f32 = 8.0;
-pub const DIFF_ROW_HEIGHT: f32 = 20.0;
+pub const DIFF_ROW_HEIGHT: f32 = 22.0;
 pub const DIFF_HEADER_HEIGHT: f32 = 32.0;
-pub const DIFF_LINE_NUM_WIDTH: f32 = 40.0;
+pub const DIFF_LINE_NUM_WIDTH: f32 = 50.0;
 pub const FILTER_BAR_HEIGHT: f32 = 32.0;
 
 // ---------------------------------------------------------------------------

@@ -1563,7 +1563,7 @@ impl GitSparkApp {
         let text_child: Div = if is_empty && !focused {
             // Placeholder
             div()
-                .text_size(px(12.0))
+                .text_size(theme::z(12.0))
                 .text_color(theme::text_muted())
                 .child(placeholder.to_string())
         } else if focused {
@@ -1574,7 +1574,7 @@ impl GitSparkApp {
 
             if multiline {
                 // For multiline, render with line wrapping
-                let mut row = h_flex().items_start().text_size(px(12.0));
+                let mut row = h_flex().items_start().text_size(theme::z(12.0));
                 row = row.child(
                     div()
                         .text_color(theme::text_main())
@@ -1597,7 +1597,7 @@ impl GitSparkApp {
                 h_flex()
                     .items_center()
                     .overflow_x_hidden()
-                    .text_size(px(12.0))
+                    .text_size(theme::z(12.0))
                     .child(
                         div()
                             .text_color(theme::text_main())
@@ -1622,12 +1622,12 @@ impl GitSparkApp {
             // Has text, not focused
             if multiline {
                 div()
-                    .text_size(px(12.0))
+                    .text_size(theme::z(12.0))
                     .text_color(theme::text_main())
                     .child(value.to_string())
             } else {
                 div()
-                    .text_size(px(12.0))
+                    .text_size(theme::z(12.0))
                     .text_color(theme::text_main())
                     .overflow_x_hidden()
                     .whitespace_nowrap()
@@ -1829,14 +1829,14 @@ impl GitSparkApp {
         let selected_diff = selected_file
             .and_then(|path| diffs.iter().find(|d| d.path == path));
 
-        // For History tab, show a file list panel on the left of the workspace.
-        if sidebar_tab == SidebarTab::History && !diffs.is_empty() {
-            let file_list = self.render_commit_file_list(diffs, selected_file, cx);
+        // Show file list panel + diff when there are files to show
+        if !diffs.is_empty() {
+            let file_list = self.render_commit_file_list(diffs, selected_file, sidebar_tab, cx);
             h_resizable("workspace-panels")
                 .child(
                     resizable_panel()
-                        .size(px(240.0))
-                        .size_range(px(150.0)..px(400.0))
+                        .size(px(200.0))
+                        .size_range(px(120.0)..px(350.0))
                         .child(file_list),
                 )
                 .child(
@@ -1859,6 +1859,7 @@ impl GitSparkApp {
         &self,
         diffs: &[DiffEntry],
         selected_file: Option<&str>,
+        tab: SidebarTab,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let view = cx.entity().clone();
@@ -1875,11 +1876,6 @@ impl GitSparkApp {
                         let entry = &diffs_snapshot[ix];
                         let is_selected =
                             sel.as_deref() == Some(entry.path.as_str());
-                        let bg = if is_selected {
-                            theme::with_alpha(theme::accent_muted(), 0.2)
-                        } else {
-                            gpui::transparent_black()
-                        };
                         let text_color = if is_selected {
                             gpui::white().into()
                         } else {
@@ -1895,19 +1891,34 @@ impl GitSparkApp {
                                 entry.path
                             )))
                             .w_full()
-                            .h(px(28.0))
-                            .px(px(10.0))
+                            .h(theme::z(28.0))
+                            .px(theme::z(10.0))
                             .items_center()
-                            .bg(bg)
-                            .border_b_1()
-                            .border_color(theme::border())
+                            .bg(if is_selected {
+                                theme::hover_bg()
+                            } else {
+                                gpui::transparent_black()
+                            })
+                            // Blue left border for selected file
+                            .border_l_2()
+                            .border_color(if is_selected {
+                                theme::accent()
+                            } else {
+                                gpui::transparent_black()
+                            })
                             .cursor_pointer()
                             .hover(|s| s.bg(theme::hover_bg()))
                             .on_click(move |_evt, _win, cx| {
                                 let path = path.clone();
                                 vh.update(cx, |app, cx| {
-                                    app.selection.selected_commit_file =
-                                        Some(path);
+                                    match tab {
+                                        SidebarTab::Changes => {
+                                            app.selection.selected_change = Some(path);
+                                        }
+                                        SidebarTab::History => {
+                                            app.selection.selected_commit_file = Some(path);
+                                        }
+                                    }
                                     cx.notify();
                                 });
                             })
@@ -1917,7 +1928,7 @@ impl GitSparkApp {
                                     .overflow_x_hidden()
                                     .child(
                                         div()
-                                            .text_size(px(12.0))
+                                            .text_size(theme::z(12.0))
                                             .text_color(text_color)
                                             .whitespace_nowrap()
                                             .child(entry.path.clone()),
@@ -1939,15 +1950,15 @@ impl GitSparkApp {
             .child(
                 h_flex()
                     .w_full()
-                    .h(px(32.0))
-                    .px(px(10.0))
+                    .h(theme::z(32.0))
+                    .px(theme::z(10.0))
                     .items_center()
                     .bg(theme::surface_bg_muted())
                     .border_b_1()
                     .border_color(theme::border())
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(theme::z(12.0))
                             .text_color(theme::text_muted())
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(format!(
@@ -2193,7 +2204,7 @@ impl GitSparkApp {
                     .justify_center()
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(theme::z(12.0))
                             .text_color(theme::text_muted())
                             .child("No recent repositories"),
                     ),
@@ -2533,7 +2544,7 @@ impl GitSparkApp {
                     .justify_center()
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(theme::z(12.0))
                             .text_color(theme::text_muted())
                             .child("No branches"),
                     ),
@@ -2709,7 +2720,7 @@ impl GitSparkApp {
             }))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(theme::z(12.0))
                     .text_color(if section == SettingsSection::Git {
                         theme::text_main()
                     } else {
@@ -2738,7 +2749,7 @@ impl GitSparkApp {
             }))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(theme::z(12.0))
                     .text_color(if section == SettingsSection::Ai {
                         theme::text_main()
                     } else {
@@ -2879,7 +2890,7 @@ impl GitSparkApp {
                     .items_center()
                     .child(
                         div()
-                            .text_size(px(12.0))
+                            .text_size(theme::z(12.0))
                             .text_color(if value.is_empty() {
                                 theme::text_muted()
                             } else {

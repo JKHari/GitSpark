@@ -222,7 +222,7 @@ fn render_interactive_tab_bar(
 
 pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
     let bg = if selected {
-        accent_selection_bg()
+        theme::hover_bg()
     } else {
         gpui::transparent_black()
     };
@@ -243,8 +243,13 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
         .px(z(10.0))
         .items_center()
         .bg(bg)
-        .border_b_1()
-        .border_color(theme::toolbar_button_border())
+        // Blue left border for selected file
+        .border_l_2()
+        .border_color(if selected {
+            theme::accent()
+        } else {
+            gpui::transparent_black()
+        })
         .gap(z(5.0))
         .child(checkbox)
         .child(

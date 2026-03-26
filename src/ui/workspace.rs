@@ -3,6 +3,7 @@ use gpui_component::{h_flex, v_flex};
 
 use crate::models::DiffEntry;
 use crate::ui::theme;
+use crate::ui::theme::z;
 
 // --- Intra-line character range ---
 
@@ -333,28 +334,29 @@ fn render_diff_line(line: &DiffLine) -> Div {
 
     let mut row = h_flex()
         .w_full()
-        .h(px(theme::DIFF_ROW_HEIGHT))
+        .min_h(z(theme::DIFF_ROW_HEIGHT))
         .flex_shrink_0()
         .font_family("monospace")
-        .text_size(px(12.0));
+        .text_size(z(12.0))
+        .py(z(2.0)); // match GitHub Desktop: padding 2px 0
 
     // Old line number gutter
     row = row.child(
         div()
-            .w(px(theme::DIFF_LINE_NUM_WIDTH))
+            .w(z(theme::DIFF_LINE_NUM_WIDTH))
             .flex_shrink_0()
             .text_color(theme::line_num_color())
-            .px(px(4.0))
+            .px(z(4.0))
             .child(old_num_str),
     );
 
     // New line number gutter
     row = row.child(
         div()
-            .w(px(theme::DIFF_LINE_NUM_WIDTH))
+            .w(z(theme::DIFF_LINE_NUM_WIDTH))
             .flex_shrink_0()
             .text_color(theme::line_num_color())
-            .px(px(4.0))
+            .px(z(4.0))
             .child(new_num_str),
     );
 
@@ -364,7 +366,7 @@ fn render_diff_line(line: &DiffLine) -> Div {
             row = row.bg(theme::diff_add_bg()).child(
                 div()
                     .flex_1()
-                    .pl(px(8.0))
+                    .pl(z(5.0))
                     .text_color(theme::diff_add_fg())
                     .child(line.content.clone()),
             );
@@ -373,7 +375,7 @@ fn render_diff_line(line: &DiffLine) -> Div {
             row = row.bg(theme::diff_del_bg()).child(
                 div()
                     .flex_1()
-                    .pl(px(8.0))
+                    .pl(z(5.0))
                     .text_color(theme::diff_del_fg())
                     .child(line.content.clone()),
             );
@@ -382,7 +384,7 @@ fn render_diff_line(line: &DiffLine) -> Div {
             row = row.bg(theme::diff_hunk_bg()).child(
                 div()
                     .flex_1()
-                    .pl(px(8.0))
+                    .pl(z(5.0))
                     .text_color(theme::text_muted())
                     .child(line.content.clone()),
             );
@@ -391,8 +393,8 @@ fn render_diff_line(line: &DiffLine) -> Div {
             row = row.child(
                 div()
                     .flex_1()
-                    .pl(px(8.0))
-                    .text_color(theme::text_muted())
+                    .pl(z(5.0))
+                    .text_color(theme::text_main()) // --diff-text-color: var(--text-color)
                     .child(line.content.clone()),
             );
         }
@@ -420,14 +422,14 @@ fn render_diff_line(line: &DiffLine) -> Div {
                     .child(
                         div()
                             .flex_1()
-                            .pl(px(8.0))
+                            .pl(z(8.0))
                             .bg(theme::diff_del_bg())
                             .child(old_content),
                     )
                     .child(
                         div()
                             .flex_1()
-                            .pl(px(8.0))
+                            .pl(z(8.0))
                             .bg(theme::diff_add_bg())
                             .child(new_content),
                     ),
@@ -442,17 +444,17 @@ fn render_diff_line(line: &DiffLine) -> Div {
 fn render_diff_header(file_path: &str) -> Div {
     h_flex()
         .w_full()
-        .h(px(theme::DIFF_HEADER_HEIGHT))
+        .h(z(theme::DIFF_HEADER_HEIGHT))
         .flex_shrink_0()
         .bg(theme::surface_bg())
         .border_b_1()
         .border_color(theme::border())
-        .px(px(14.0))
+        .px(z(14.0))
         .items_center()
         .child(
             div()
                 .text_color(theme::text_main())
-                .text_size(px(12.0))
+                .text_size(z(12.0))
                 .child(file_path.to_string()),
         )
 }
@@ -469,7 +471,7 @@ fn render_empty_state() -> Div {
         .child(
             div()
                 .text_color(theme::text_muted())
-                .text_size(px(14.0))
+                .text_size(z(14.0))
                 .child("Select a file to view its diff"),
         )
 }
@@ -496,7 +498,7 @@ pub fn render_workspace(
                 .child(
                     div()
                         .text_color(theme::text_muted())
-                        .text_size(px(14.0))
+                        .text_size(z(14.0))
                         .child("Binary file changed."),
                 )
                 .into_any_element()
@@ -510,7 +512,7 @@ pub fn render_workspace(
                 .child(
                     div()
                         .text_color(theme::text_muted())
-                        .text_size(px(14.0))
+                        .text_size(z(14.0))
                         .child("No diff text available."),
                 )
                 .into_any_element()
@@ -539,7 +541,7 @@ pub fn render_workspace(
                 .child(
                     div()
                         .text_color(theme::text_muted())
-                        .text_size(px(14.0))
+                        .text_size(z(14.0))
                         .child("No diff available for this file."),
                 )
                 .into_any_element()
