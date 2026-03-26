@@ -1138,7 +1138,7 @@ impl Render for GitSparkApp {
         let mut root = v_flex()
             .size_full()
             .bg(theme::bg())
-            .font_family("system-ui")
+            .font_family(".SystemUIFont") // San Francisco on macOS, matches gpui-component default
             .text_size(px(theme::FONT_SIZE))
             .child(
                 h_resizable("main-panels")
