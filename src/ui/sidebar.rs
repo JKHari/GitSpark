@@ -84,12 +84,35 @@ pub fn render_sidebar_interactive(
     let content: AnyElement = match sidebar_tab {
         SidebarTab::Changes => {
             if changes.is_empty() {
-                div().flex_1().child(render_empty_state("No changed files")).into_any_element()
+                // No changes empty state with CTAs
+                render_no_changes_state(&view, cx).into_any_element()
             } else {
                 let file_count = changes.len();
-                let include_all = app.commit.include_all;
+                let included_count = if app.commit.include_all {
+                    file_count
+                } else {
+                    changes
+                        .iter()
+                        .filter(|c| app.commit.included_files.contains(&c.path))
+                        .count()
+                };
 
-                // Include-all header: checkbox + "N changed files"
+                // Tri-state: all, none, or mixed
+                let check_state = if included_count == file_count {
+                    CheckState::On
+                } else if included_count == 0 {
+                    CheckState::Off
+                } else {
+                    CheckState::Mixed
+                };
+
+                let header_label = if included_count == file_count {
+                    format!("{file_count} changed files")
+                } else {
+                    format!("{included_count} of {file_count} changed files")
+                };
+
+                // Include-all header: checkbox + "N of M changed files"
                 let include_header = h_flex()
                     .w_full()
                     .h(z(28.0))
@@ -102,12 +125,20 @@ pub fn render_sidebar_interactive(
                     .flex_shrink_0()
                     .child({
                         let vh = view.clone();
-                        render_checkbox(include_all)
+                        render_tristate_checkbox(check_state)
                             .id("include-all-checkbox")
                             .cursor_pointer()
                             .on_click(move |_evt, _win, cx| {
                                 vh.update(cx, |app, cx| {
-                                    app.commit.include_all = !app.commit.include_all;
+                                    if app.commit.include_all {
+                                        // Switch to none
+                                        app.commit.include_all = false;
+                                        app.commit.included_files.clear();
+                                    } else {
+                                        // Switch to all
+                                        app.commit.include_all = true;
+                                        app.commit.included_files.clear();
+                                    }
                                     cx.notify();
                                 });
                             })
@@ -117,12 +148,70 @@ pub fn render_sidebar_interactive(
                             .text_size(z(11.0))
                             .text_color(theme::text_muted())
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(format!("{file_count} changed files")),
+                            .child(header_label),
                     );
 
                 let changes_snapshot: Vec<ChangeEntry> = changes.to_vec();
                 let sel = selected_change.clone();
-                v_flex().flex_1().min_h_0().child(include_header).child(
+                let cap_include_all = app.commit.include_all;
+                let cap_included_files: std::collections::HashSet<String> =
+                    app.commit.included_files.clone();
+
+                // Stash indicator
+                let mut stash_row: AnyElement = div().into_any_element();
+                if app.repo.has_stash {
+                    let stash_view = view.clone();
+                    stash_row = h_flex()
+                        .id("stash-indicator")
+                        .w_full()
+                        .h(z(32.0))
+                        .px(z(10.0))
+                        .items_center()
+                        .gap(z(6.0))
+                        .bg(theme::surface_bg())
+                        .border_b_1()
+                        .border_color(theme::border())
+                        .flex_shrink_0()
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::hover_bg()))
+                        .child(
+                            Icon::new(IconName::Inbox)
+                                .size(z(14.0))
+                                .text_color(theme::text_muted()),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_size(z(12.0))
+                                .text_color(theme::text_main())
+                                .child("Stashed Changes"),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronRight)
+                                .size(z(12.0))
+                                .text_color(theme::text_muted()),
+                        )
+                        .on_click(move |_evt, _win, cx| {
+                            stash_view.update(cx, |app, cx| {
+                                app.messages.status_message = "Restoring stash...".to_string();
+                                if let Some(path) = app.repo_path().map(std::path::PathBuf::from) {
+                                    let tx = app.event_tx.clone();
+                                    let git = crate::git::GitClient::new();
+                                    std::thread::spawn(move || {
+                                        let res = git.stash_pop(&path).map_err(|e| e.to_string());
+                                        tx.send(crate::ui::app::AppEvent::NetworkActionCompleted(
+                                            res,
+                                            "Restored stash".to_string(),
+                                        ));
+                                    });
+                                }
+                                cx.notify();
+                            });
+                        })
+                        .into_any_element();
+                }
+
+                v_flex().flex_1().min_h_0().child(include_header).child(stash_row).child(
                 div().id("changes-scroll").flex_1().min_h_0().overflow_y_scrollbar().child(
                     uniform_list("changes-list", changes_snapshot.len(), {
                         let view = view.clone();
@@ -131,11 +220,15 @@ pub fn render_sidebar_interactive(
                                 .map(|ix| {
                                     let change = &changes_snapshot[ix];
                                     let is_selected = sel.as_deref() == Some(change.path.as_str());
+                                    let is_included = cap_include_all
+                                        || cap_included_files.contains(&change.path);
                                     let path = change.path.clone();
+                                    let checkbox_path = change.path.clone();
+                                    let checkbox_view = view.clone();
                                     let click_view = view.clone();
                                     let ctx_path = change.path.clone();
                                     changes_context_menu::bind_changes_context_click(
-                                        render_change_row(change, is_selected)
+                                        render_change_row(change, is_selected, is_included, checkbox_view, checkbox_path)
                                             .id(SharedString::from(format!("change-{}", change.path)))
                                             .cursor_pointer()
                                             .hover(|s| s.bg(theme::hover_bg()))
@@ -240,7 +333,7 @@ fn render_interactive_tab_bar(
                 .bg(theme::toolbar_badge_bg())
                 .text_size(z(theme::FONT_SIZE_XS))
                 .text_color(theme::text_main())
-                .child(change_count.to_string()),
+                .child(if change_count > 300 { "300+".to_string() } else { change_count.to_string() }),
         );
     }
 
@@ -307,7 +400,13 @@ fn render_interactive_tab_bar(
 // Changes list
 // ---------------------------------------------------------------------------
 
-pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
+pub fn render_change_row(
+    change: &ChangeEntry,
+    selected: bool,
+    included: bool,
+    checkbox_view: Entity<GitSparkApp>,
+    checkbox_path: String,
+) -> Div {
     let bg = if selected {
         theme::hover_bg()
     } else {
@@ -318,11 +417,44 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
 
     let text_color = if selected {
         gpui::white().into()
+    } else if !included {
+        theme::text_muted() // dim excluded files
     } else {
         theme::text_main()
     };
 
-    let checkbox = render_checkbox(true);
+    // Interactive checkbox
+    let checkbox = render_checkbox(included)
+        .id(SharedString::from(format!("chk-{}", change.path)))
+        .cursor_pointer()
+        .on_click(move |_evt, _win, cx| {
+            let path = checkbox_path.clone();
+            checkbox_view.update(cx, |app, cx| {
+                if app.commit.include_all {
+                    // Switching from "all" to individual: include all except this one
+                    app.commit.include_all = false;
+                    if let Some(snapshot) = &app.repo.snapshot {
+                        for c in &snapshot.changes {
+                            if c.path != path {
+                                app.commit.included_files.insert(c.path.clone());
+                            }
+                        }
+                    }
+                } else if app.commit.included_files.contains(&path) {
+                    app.commit.included_files.remove(&path);
+                } else {
+                    app.commit.included_files.insert(path);
+                    // Check if all are now included
+                    if let Some(snapshot) = &app.repo.snapshot {
+                        if app.commit.included_files.len() == snapshot.changes.len() {
+                            app.commit.include_all = true;
+                            app.commit.included_files.clear();
+                        }
+                    }
+                }
+                cx.notify();
+            });
+        });
 
     h_flex()
         .w_full()
@@ -330,7 +462,6 @@ pub fn render_change_row(change: &ChangeEntry, selected: bool) -> Div {
         .px(z(10.0))
         .items_center()
         .bg(bg)
-        // Blue left border for selected file
         .border_l_2()
         .border_color(if selected {
             theme::accent()
@@ -378,6 +509,198 @@ fn render_checkbox(checked: bool) -> Div {
             .border_color(theme::text_muted())
             .flex_shrink_0()
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum CheckState {
+    On,
+    Off,
+    Mixed,
+}
+
+fn render_tristate_checkbox(state: CheckState) -> Div {
+    let size = 14.0;
+    match state {
+        CheckState::On => div()
+            .w(z(size))
+            .h(z(size))
+            .rounded(z(3.0))
+            .bg(theme::accent())
+            .border_1()
+            .border_color(theme::accent())
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .child(
+                Icon::new(IconName::Check)
+                    .size(z(10.0))
+                    .text_color(gpui::white()),
+            ),
+        CheckState::Mixed => div()
+            .w(z(size))
+            .h(z(size))
+            .rounded(z(3.0))
+            .bg(theme::accent())
+            .border_1()
+            .border_color(theme::accent())
+            .flex_shrink_0()
+            .items_center()
+            .justify_center()
+            .child(
+                Icon::new(IconName::Minus)
+                    .size(z(10.0))
+                    .text_color(gpui::white()),
+            ),
+        CheckState::Off => div()
+            .w(z(size))
+            .h(z(size))
+            .rounded(z(3.0))
+            .border_1()
+            .border_color(theme::text_muted())
+            .flex_shrink_0(),
+    }
+}
+
+fn render_no_changes_state(
+    view: &Entity<GitSparkApp>,
+    cx: &mut Context<GitSparkApp>,
+) -> Div {
+    let vh = view.clone();
+    let vh2 = view.clone();
+    let vh3 = view.clone();
+
+    v_flex()
+        .flex_1()
+        .w_full()
+        .items_center()
+        .justify_center()
+        .gap(z(16.0))
+        .p(z(20.0))
+        // Main message
+        .child(
+            v_flex()
+                .items_center()
+                .gap(z(4.0))
+                .child(
+                    div()
+                        .text_size(z(14.0))
+                        .text_color(theme::text_main())
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("No local changes"),
+                )
+                .child(
+                    div()
+                        .text_size(z(12.0))
+                        .text_color(theme::text_muted())
+                        .child("There are no uncommitted changes"),
+                ),
+        )
+        // Action buttons
+        .child(
+            v_flex()
+                .w_full()
+                .gap(z(8.0))
+                .child(
+                    h_flex()
+                        .id("no-changes-open-editor")
+                        .w_full()
+                        .h(z(28.0))
+                        .px(z(10.0))
+                        .items_center()
+                        .gap(z(8.0))
+                        .rounded(z(theme::CORNER_RADIUS))
+                        .bg(theme::surface_bg())
+                        .border_1()
+                        .border_color(theme::surface_bg_alt())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::hover_bg()))
+                        .child(
+                            Icon::new(IconName::ExternalLink)
+                                .size(z(14.0))
+                                .text_color(theme::accent()),
+                        )
+                        .child(
+                            div()
+                                .text_size(z(12.0))
+                                .text_color(theme::accent())
+                                .child("Open in External Editor"),
+                        )
+                        .on_click(move |_evt, _win, cx| {
+                            vh.update(cx, |app, _cx| {
+                                if let Some(path) = app.repo_path() {
+                                    let _ = open::that_detached(path);
+                                }
+                            });
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .id("no-changes-reveal")
+                        .w_full()
+                        .h(z(28.0))
+                        .px(z(10.0))
+                        .items_center()
+                        .gap(z(8.0))
+                        .rounded(z(theme::CORNER_RADIUS))
+                        .bg(theme::surface_bg())
+                        .border_1()
+                        .border_color(theme::surface_bg_alt())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::hover_bg()))
+                        .child(
+                            Icon::new(IconName::Folder)
+                                .size(z(14.0))
+                                .text_color(theme::accent()),
+                        )
+                        .child(
+                            div()
+                                .text_size(z(12.0))
+                                .text_color(theme::accent())
+                                .child("View files in Finder"),
+                        )
+                        .on_click(move |_evt, _win, cx| {
+                            vh2.update(cx, |app, _cx| {
+                                if let Some(path) = app.repo_path() {
+                                    let _ = open::that_detached(path);
+                                }
+                            });
+                        }),
+                )
+                .child(
+                    h_flex()
+                        .id("no-changes-github")
+                        .w_full()
+                        .h(z(28.0))
+                        .px(z(10.0))
+                        .items_center()
+                        .gap(z(8.0))
+                        .rounded(z(theme::CORNER_RADIUS))
+                        .bg(theme::surface_bg())
+                        .border_1()
+                        .border_color(theme::surface_bg_alt())
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme::hover_bg()))
+                        .child(
+                            Icon::new(IconName::GitHub)
+                                .size(z(14.0))
+                                .text_color(theme::accent()),
+                        )
+                        .child(
+                            div()
+                                .text_size(z(12.0))
+                                .text_color(theme::accent())
+                                .child("View on GitHub"),
+                        )
+                        .on_click(move |_evt, _win, cx| {
+                            vh3.update(cx, |app, _cx| {
+                                if let Some(snapshot) = &app.repo.snapshot {
+                                    let name = &snapshot.repo.name;
+                                    let _ = open::that_detached(format!("https://github.com/{name}"));
+                                }
+                            });
+                        }),
+                ),
+        )
 }
 
 // ---------------------------------------------------------------------------

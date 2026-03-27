@@ -9,7 +9,7 @@ use std::{env, process::Command};
 use gpui::*;
 use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::{Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_component::{Disableable, Icon, IconName, Sizable, h_flex, v_flex};
 use rfd::FileDialog;
 
 use crate::ai::AiClient;
@@ -43,7 +43,7 @@ enum RepoRefreshReason {
     Watch,
 }
 
-enum AppEvent {
+pub(crate) enum AppEvent {
     RepoLoaded(Result<RepoSnapshot, String>),
     RepoRefreshed(PathBuf, Result<RepoSnapshot, String>, RepoRefreshReason),
     BranchSwitched(Result<RepoSnapshot, String>, String),
@@ -111,13 +111,13 @@ pub enum SettingsAction {
 /// Sender wrapper that sets an atomic flag before sending,
 /// so the poll timer can skip acquiring the app lock when idle.
 #[derive(Clone)]
-struct NotifySender {
+pub(crate) struct NotifySender {
     tx: Sender<AppEvent>,
     pending: Arc<AtomicBool>,
 }
 
 impl NotifySender {
-    fn send(&self, event: AppEvent) {
+    pub(crate) fn send(&self, event: AppEvent) {
         self.pending.store(true, Ordering::Release);
         let _ = self.tx.send(event);
     }
@@ -146,7 +146,7 @@ pub struct GitSparkApp {
     pub messages: MessageState,
     repo_watch_generation: Arc<AtomicU64>,
     watched_repo_path: Option<PathBuf>,
-    event_tx: NotifySender,
+    pub(crate) event_tx: NotifySender,
     event_rx: Receiver<AppEvent>,
     // Text input state
     summary_focus: FocusHandle,
@@ -257,6 +257,25 @@ impl GitSparkApp {
                     "n" => {
                         app.nav.active_dialog = ActiveDialog::CreateBranch;
                         cx.notify();
+                    }
+                    _ => {}
+                }
+            } else if !cmd && !shift {
+                // Arrow keys for tab switching (when not in a text field)
+                match ks.key.as_str() {
+                    "left" | "right" => {
+                        // Only switch tabs if no text field is focused
+                        if !app.summary_focus.is_focused(_window)
+                            && !app.description_focus.is_focused(_window)
+                            && !app.branch_filter_focus.is_focused(_window)
+                            && !app.repo_filter_focus.is_focused(_window)
+                        {
+                            app.nav.sidebar_tab = match app.nav.sidebar_tab {
+                                SidebarTab::Changes => SidebarTab::History,
+                                SidebarTab::History => SidebarTab::Changes,
+                            };
+                            cx.notify();
+                        }
                     }
                     _ => {}
                 }
@@ -1065,7 +1084,9 @@ impl GitSparkApp {
     ) {
         match action {
             ChangesContextAction::DiscardChanges => {
-                self.discard_change(&path);
+                self.nav.active_dialog = ActiveDialog::DiscardChanges {
+                    paths: vec![path.clone()],
+                };
             }
             ChangesContextAction::IgnoreFile => {
                 self.ignore_path(&path);
@@ -2529,25 +2550,77 @@ impl GitSparkApp {
         // Description + action bar grouped together (shared border)
         let description_group = v_flex().w_full().child(description_field).child(action_bar);
 
-        let commit_label = format!("Commit to {branch_name}");
+        // Commit button label with file count
+        let file_count = self
+            .repo
+            .snapshot
+            .as_ref()
+            .map(|s| {
+                if self.commit.include_all {
+                    s.changes.len()
+                } else {
+                    self.commit.included_files.len()
+                }
+            })
+            .unwrap_or(0);
+
+        let commit_label = if self.commit.ai_in_flight {
+            "Generating commit details\u{2026}".to_string()
+        } else if file_count > 0 {
+            format!("Commit {file_count} files to {branch_name}")
+        } else {
+            format!("Commit to {branch_name}")
+        };
+
+        let can_commit = !self.commit.summary.trim().is_empty()
+            && file_count > 0
+            && !self.commit.ai_in_flight;
+
+        // Summary length hint (> 50 chars)
+        let summary_hint = if self.commit.summary.len() > 50 {
+            div()
+                .flex_shrink_0()
+                .child(
+                    Icon::new(IconName::Info)
+                        .size(px(12.0))
+                        .text_color(theme::warning()),
+                )
+                .into_any_element()
+        } else {
+            div().into_any_element()
+        };
 
         v_flex()
             .w_full()
             .border_t_1()
             .border_color(theme::toolbar_button_border())
             .bg(theme::panel_bg())
-            .p(px(10.0)) // --spacing: 10px
+            .p(px(10.0))
             .gap(px(10.0))
-            .child(summary_field)
+            .child(
+                h_flex()
+                    .gap(px(4.0))
+                    .child(summary_field)
+                    .child(summary_hint),
+            )
             .child(description_group)
             .child(
                 Button::new("commit-btn")
                     .label(commit_label)
                     .small()
+                    .disabled(!can_commit)
                     .custom(
                         ButtonCustomVariant::new(cx)
-                            .color(theme::commit_button_bg())
-                            .foreground(theme::commit_button_text())
+                            .color(if can_commit {
+                                theme::commit_button_bg()
+                            } else {
+                                theme::surface_bg_alt()
+                            })
+                            .foreground(if can_commit {
+                                theme::commit_button_text()
+                            } else {
+                                theme::text_muted()
+                            })
                             .hover(theme::commit_button_hover_bg())
                             .active(theme::commit_button_hover_bg()),
                     )
@@ -2917,6 +2990,213 @@ impl GitSparkApp {
                                         app.create_branch(cx);
                                     })),
                             ),
+                    )
+            }
+            ActiveDialog::DiscardChanges { paths } => {
+                let file_list = if paths.len() <= 10 {
+                    paths.iter().map(|p| format!("  \u{2022} {p}")).collect::<Vec<_>>().join("\n")
+                } else {
+                    let shown: Vec<_> = paths.iter().take(10).map(|p| format!("  \u{2022} {p}")).collect();
+                    format!("{}\n  ...and {} more", shown.join("\n"), paths.len() - 10)
+                };
+                let path_count = paths.len();
+
+                v_flex()
+                    .w(px(420.0))
+                    .bg(theme::panel_bg())
+                    .rounded(theme::z(theme::CORNER_RADIUS))
+                    .border_1()
+                    .border_color(theme::border())
+                    .shadow_lg()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(theme::z(16.0))
+                            .py(theme::z(12.0))
+                            .items_center()
+                            .gap(theme::z(8.0))
+                            .border_b_1()
+                            .border_color(theme::border())
+                            .child(
+                                Icon::new(IconName::TriangleAlert)
+                                    .size(px(16.0))
+                                    .text_color(theme::warning()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(theme::z(14.0))
+                                    .text_color(theme::text_main())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Confirm Discard Changes"),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .p(theme::z(16.0))
+                            .gap(theme::z(8.0))
+                            .child(
+                                div()
+                                    .text_size(theme::z(12.0))
+                                    .text_color(theme::text_main())
+                                    .child(format!(
+                                        "Are you sure you want to discard all changes to {path_count} file{}?",
+                                        if path_count == 1 { "" } else { "s" }
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(theme::z(11.0))
+                                    .text_color(theme::text_muted())
+                                    .whitespace_nowrap()
+                                    .child(file_list),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(theme::z(16.0))
+                            .py(theme::z(12.0))
+                            .justify_end()
+                            .gap(theme::z(8.0))
+                            .border_t_1()
+                            .border_color(theme::border())
+                            .child(
+                                div()
+                                    .id("discard-cancel")
+                                    .px(theme::z(12.0))
+                                    .py(theme::z(6.0))
+                                    .rounded(theme::z(theme::CORNER_RADIUS))
+                                    .bg(theme::surface_bg())
+                                    .border_1()
+                                    .border_color(theme::surface_bg_alt())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::toolbar_hover_bg()))
+                                    .child(div().text_size(theme::z(12.0)).text_color(theme::text_main()).child("Cancel"))
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id("discard-confirm")
+                                    .px(theme::z(12.0))
+                                    .py(theme::z(6.0))
+                                    .rounded(theme::z(theme::CORNER_RADIUS))
+                                    .bg(theme::danger())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(gpui::Hsla::from(gpui::rgb(0xff6961))))
+                                    .child(div().text_size(theme::z(12.0)).text_color(gpui::white()).child("Discard Changes"))
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        if let ActiveDialog::DiscardChanges { paths } = &app.nav.active_dialog {
+                                            let paths = paths.clone();
+                                            for path in &paths {
+                                                app.discard_change(path);
+                                            }
+                                        }
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+            }
+            ActiveDialog::StashAndSwitch { target_branch } => {
+                let target = target_branch.clone();
+                v_flex()
+                    .w(px(400.0))
+                    .bg(theme::panel_bg())
+                    .rounded(theme::z(theme::CORNER_RADIUS))
+                    .border_1()
+                    .border_color(theme::border())
+                    .shadow_lg()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(theme::z(16.0))
+                            .py(theme::z(12.0))
+                            .items_center()
+                            .border_b_1()
+                            .border_color(theme::border())
+                            .child(
+                                div()
+                                    .text_size(theme::z(14.0))
+                                    .text_color(theme::text_main())
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Switch Branch"),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .p(theme::z(16.0))
+                            .gap(theme::z(8.0))
+                            .child(
+                                div()
+                                    .text_size(theme::z(12.0))
+                                    .text_color(theme::text_main())
+                                    .child("You have uncommitted changes. What would you like to do?"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(theme::z(12.0))
+                                    .text_color(theme::text_muted())
+                                    .child("Your changes will be stashed before switching."),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .px(theme::z(16.0))
+                            .py(theme::z(12.0))
+                            .justify_end()
+                            .gap(theme::z(8.0))
+                            .border_t_1()
+                            .border_color(theme::border())
+                            .child(
+                                div()
+                                    .id("stash-cancel")
+                                    .px(theme::z(12.0))
+                                    .py(theme::z(6.0))
+                                    .rounded(theme::z(theme::CORNER_RADIUS))
+                                    .bg(theme::surface_bg())
+                                    .border_1()
+                                    .border_color(theme::surface_bg_alt())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::toolbar_hover_bg()))
+                                    .child(div().text_size(theme::z(12.0)).text_color(theme::text_main()).child("Cancel"))
+                                    .on_click(cx.listener(|app, _evt, _win, cx| {
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child({
+                                let target = target.clone();
+                                div()
+                                    .id("stash-switch")
+                                    .px(theme::z(12.0))
+                                    .py(theme::z(6.0))
+                                    .rounded(theme::z(theme::CORNER_RADIUS))
+                                    .bg(theme::commit_button_bg())
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme::commit_button_hover_bg()))
+                                    .child(div().text_size(theme::z(12.0)).text_color(theme::commit_button_text()).child("Stash & Switch"))
+                                    .on_click(cx.listener(move |app, _evt, _win, cx| {
+                                        app.nav.active_dialog = ActiveDialog::None;
+                                        // Stash then switch
+                                        if let Some(path) = app.repo_path().map(PathBuf::from) {
+                                            let tx = app.event_tx.clone();
+                                            let git = GitClient::new();
+                                            let branch = target.clone();
+                                            thread::spawn(move || {
+                                                let _ = git.stash_all(&path);
+                                                let res = git.switch_branch(&path, &branch).map_err(|e| e.to_string());
+                                                tx.send(AppEvent::BranchSwitched(res, branch));
+                                            });
+                                        }
+                                        cx.notify();
+                                    }))
+                            }),
                     )
             }
             _ => div(),
