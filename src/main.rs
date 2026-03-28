@@ -13,6 +13,26 @@ use gpui::*;
 use crate::storage::load_settings;
 use crate::ui::GitSparkApp;
 
+fn platform_titlebar_options() -> TitlebarOptions {
+    #[cfg(target_os = "macos")]
+    {
+        TitlebarOptions {
+            title: Some("GitSpark".into()),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(10.0), px(12.0))),
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        TitlebarOptions {
+            title: Some("GitSpark".into()),
+            appears_transparent: false,
+            traffic_light_position: None,
+        }
+    }
+}
+
 fn main() {
     let settings = match load_settings() {
         Ok(s) => s,
@@ -57,11 +77,7 @@ fn main() {
                     size(px(initial_width), px(initial_height)),
                     cx,
                 ))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("GitSpark".into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(10.0), px(12.0))),
-                }),
+                titlebar: Some(platform_titlebar_options()),
                 ..Default::default()
             },
             |_window, cx| cx.new(|cx| GitSparkApp::new(settings.clone(), cx)),
