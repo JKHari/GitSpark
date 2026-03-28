@@ -1,4 +1,6 @@
 use std::fs;
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, SystemTime};
@@ -8,6 +10,9 @@ use anyhow::{Context, Result, anyhow, bail};
 use crate::models::{
     BranchInfo, ChangeEntry, CommitInfo, DiffEntry, GitIdentity, RepoSnapshot, RepoSummary,
 };
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 #[derive(Default)]
 pub struct GitClient;
@@ -926,9 +931,17 @@ struct StatusSnapshot {
 }
 
 fn run_git_command(repo_path: &Path, args: &[&str]) -> Result<Output> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(repo_path)
+    let mut command = Command::new("git");
+    command.args(args).current_dir(repo_path);
+
+    #[cfg(windows)]
+    {
+        // Release builds are GUI subsystem apps on Windows, so console git children
+        // would otherwise create their own terminal windows.
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = command
         .output()
         .with_context(|| {
             format!(
