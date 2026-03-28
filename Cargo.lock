@@ -2107,6 +2107,7 @@ version = "0.3.1"
 dependencies = [
  "anyhow",
  "dirs 6.0.0",
+ "embed-resource",
  "gpui",
  "gpui-component",
  "gpui-component-assets",
