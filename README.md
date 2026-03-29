@@ -1,20 +1,49 @@
-# GitSpark
+<p align="center">
+  <img src="assets/gitspark.png" width="128" alt="GitSpark icon" />
+</p>
 
-GitSpark is a Git GUI written in Rust with egui. No Electron, no web views. It calls `git` directly as a subprocess, so it needs Git on your machine and nothing else.
+<h1 align="center">GitSpark</h1>
 
-## Features
+<p align="center">
+A Git GUI written in Rust. No Electron, no web views.<br>
+Runs on macOS, Windows, and Linux.
+</p>
 
-**Primary & diff view** - See staged and unstaged changes, inspect diffs per file. Detects binary files so you don't get a wall of nonsense.
+<p align="center">
+  <a href="https://github.com/JacobSamro/GitSpark/releases/latest">Download</a>
+</p>
 
-**Merge** - Pick a branch, merge it in.
+---
 
-**Switch repos** - Open a repo with a file dialog or grab one from your recent list (stores up to 12).
+GitSpark is a desktop Git client. It shells out to the `git` CLI on your machine, so there's nothing to configure and no embedded runtime sitting between you and your repos. If Git works in your terminal, it works here.
 
-**Switch branch** - Lists local branches, lets you jump between them.
+The rendering layer is [GPUI](https://gpui.rs), the GPU-accelerated UI framework from the Zed editor. The whole thing is a single native binary.
 
-**Git config** - Edit your Git name, email, and other config values from inside the app instead of the terminal.
+## What you get
 
-**AI commit messages** - Connects to any OpenAI-compatible API to generate conventional commit messages from your diff. Works with whatever model you want as long as it speaks the same API format. You provide the key.
+Diffs with syntax highlighting and intra-line markers. Stage files, write a commit message, push. The usual stuff, but without a browser engine burning through your battery.
+
+You can also have an AI write your commit messages. Bring your own API key (OpenAI, OpenRouter, or any compatible endpoint) and it'll generate a conventional-commit-style summary from your diff. Optional, obviously.
+
+Branch switching, creation, and merging are in the toolbar. So are push/pull/fetch, ahead/behind counts, and tags.
+
+The sidebar has two tabs: changes (your working tree) and history (the commit log). You can click into any past commit to see its diff, or right-click to copy the SHA and do other git operations.
+
+Open repos through a file dialog or pick from your recent list. Settings for Git identity and AI provider are inside the app.
+
+## Downloads
+
+| | |
+|---|---|
+| macOS (Intel + Apple Silicon) | `.dmg` |
+| Windows x64 | `.zip` |
+| Linux x64 | `.tar.gz` |
+
+All on the [Releases](https://github.com/JacobSamro/GitSpark/releases/latest) page.
+
+## You need
+
+Git installed and on your PATH.
 
 ## License
 
